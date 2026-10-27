@@ -20,7 +20,9 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
 ### 2.1 Fase 1 — Setup, Build PGO e Infraestrutura SPRT
 - **Objetivo:** Importar base limpa (`sf_19`), configurar builds `native` (PGO) e `x86-64-avx2` e validar pipeline de testes.
 - **Arquivos:** `src/misc.cpp`, `scripts/build.sh`, `tests/sprt.sh`, `tests/score_310.py`.
-- **Resultados:** *(preencher após o teste de sanidade da Fase 1)*
+- **Resultados:**
+  - Assinatura (`bench`) idêntica à base: `2497913` nós (~1.35 MN/s em 1 thread).
+  - Teste de sanidade do pipeline (`suntzu-native` vs `sf-base`, 40 partidas rápidas em `UHO.epd`): 0 crashes, 0 lances ilegais, `score_310.py` validado (`V=13 E=19 D=8 | pontos 3-1-0: 58 x 43`, Elo dentro da margem estatística de 0).
 
 ### 2.2 Fase 2 — Gestão de Tempo Físico e Ponder
 - **Problema:** Descontar de 5 a 8 s por lance de operação humana no tabuleiro físico sem estourar os 25 min *sudden death*.

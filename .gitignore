@@ -27,4 +27,6 @@ fastchess/
 partidas/
 books/*.epd
 tests/results/*.pgn
+config.json
+
 
