@@ -41,10 +41,13 @@ class TimeManagement {
               Color               us,
               int                 ply,
               const OptionsMap&   options,
-              double&             originalTimeAdjust);
+              double&             originalTimeAdjust,
+              int                 pieceCount = 32);
 
     TimePoint optimum() const;
     TimePoint maximum() const;
+    bool      in_critical_panic() const { return criticalPanic; }
+    bool      in_extreme_panic() const { return extremePanic; }
     template<typename FUNC>
     TimePoint elapsed(FUNC nodes) const {
         return useNodesTime ? TimePoint(nodes()) : elapsed_time();
@@ -63,6 +66,8 @@ class TimeManagement {
 
     i64  availableNodes = -1;     // When in 'nodes as time' mode
     bool useNodesTime   = false;  // True if we are in 'nodes as time' mode
+    bool criticalPanic  = false;  // True when physical clock is under critical threshold
+    bool extremePanic   = false;  // True when clock can barely cover remaining physical overheads
 };
 
 }  // namespace Stockfish

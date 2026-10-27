@@ -200,7 +200,7 @@ void Search::Worker::start_searching() {
     }
 
     main_manager()->tm.init(limits, rootPos.side_to_move(), rootPos.game_ply(), options,
-                            main_manager()->originalTimeAdjust);
+                            main_manager()->originalTimeAdjust, rootPos.count<ALL_PIECES>());
     tt.new_search();
     main_manager()->updates.onStart();
 
@@ -592,8 +592,17 @@ bool Search::Worker::iterative_deepening() {
                              * bestMoveInstability * highBestMoveEffort;
 
             if (rootMoves.size() == 1)
-                // Cap used time to 0.5s for a better viewer experience
-                totalTime = std::min(500.0, totalTime);
+                // Instant response on single legal move in physical board play
+                totalTime = std::min(50.0, totalTime);
+            else if (rootDepth >= 10 && rootDepth - lastBestMoveDepth >= 5
+                     && totBestMoveChanges < 0.05 && nodesEffort >= 88000)
+                // Forced or overwhelmingly dominant move stable across 5+ depths: save clock
+                totalTime *= 0.45;
+
+            if (mainThread->tm.in_extreme_panic() && rootDepth >= 2)
+                totalTime = 0.0;
+            else if (mainThread->tm.in_critical_panic() && rootDepth >= 8)
+                totalTime = 0.0;
 
             auto elapsedTime = elapsed();
 

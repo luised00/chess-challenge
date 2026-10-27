@@ -47,13 +47,16 @@ void TimeManagement::init(Search::LimitsType& limits,
                           Color               us,
                           int                 ply,
                           const OptionsMap&   options,
-                          double&             originalTimeAdjust) {
+                          double&             originalTimeAdjust,
+                          int                 pieceCount) {
     TimePoint npmsec = TimePoint(options["nodestime"]);
 
     // If we have no time, we don't need to fully initialize TM.
     // startTime is used by movetime and useNodesTime is used in elapsed calls.
-    startTime    = limits.startTime;
-    useNodesTime = npmsec != 0;
+    startTime     = limits.startTime;
+    useNodesTime  = npmsec != 0;
+    criticalPanic = false;
+    extremePanic  = false;
 
     if (useNodesTime)
         limits.movetime *= npmsec;
@@ -64,7 +67,10 @@ void TimeManagement::init(Search::LimitsType& limits,
         return;
     }
 
-    TimePoint moveOverhead = TimePoint(options["Move Overhead"]);
+    TimePoint moveOverhead          = TimePoint(options["Move Overhead"]);
+    TimePoint physicalBoardOverhead = TimePoint(options["PhysicalBoardOverhead"]);
+    TimePoint panicReserveSec       = TimePoint(options["PanicReserve"]);
+    bool      fastProfile           = (options["TimeProfile"] == "rapido");
 
     // optScale is a percentage of available time to use for the current move.
     // maxScale is a multiplier applied to optimumTime.
@@ -84,6 +90,7 @@ void TimeManagement::init(Search::LimitsType& limits,
         limits.inc[us] *= npmsec;
         limits.npmsec = npmsec;
         moveOverhead *= npmsec;
+        physicalBoardOverhead *= npmsec;
     }
 
     // These numbers are used where multiplications, divisions,
@@ -91,17 +98,35 @@ void TimeManagement::init(Search::LimitsType& limits,
     const i64       scaleFactor = useNodesTime ? npmsec : 1;
     const TimePoint scaledTime  = std::max(TimePoint(1), limits.time[us] / scaleFactor);
 
+    // Dynamic remaining moves horizon N estimated from board material and game ply.
+    // In sudden death with physical board overhead, games can stretch to 80-120 moves,
+    // so we keep a conservative floor of 32 moves remaining to protect the clock.
+    int moveNum        = 1 + ply / 2;
+    int clampedPieces  = std::clamp(pieceCount, 2, 32);
+    int dynamicHorizon = 30 + (clampedPieces * 24) / 32 - std::min(8, moveNum / 12);
+    if (fastProfile)
+        dynamicHorizon = std::max(24, dynamicHorizon * 4 / 5);
+    dynamicHorizon = std::clamp(dynamicHorizon, 28, 52);
+
     // Maximum move horizon
-    int mtg = limits.movestogo ? std::min(limits.movestogo, 50) : 50;
+    int mtg = limits.movestogo ? std::min(limits.movestogo, 50) : dynamicHorizon;
 
     // If less than one second, gradually reduce mtg.
     // In cyclic time controls we keep the actual movestogo as horizon.
     if (scaledTime < 1000 && limits.movestogo == 0)
-        mtg = int(scaledTime * 0.05);
+        mtg = std::max(1, int(scaledTime * 0.05));
+
+    // Scale panic reserve if playing a shorter time control than standard 25 min
+    TimePoint reserveMs = panicReserveSec * 1000 * scaleFactor;
+    if (fastProfile)
+        reserveMs = reserveMs * 2 / 3;
+    reserveMs = std::min(reserveMs, limits.time[us] / 5);
+
+    TimePoint totalOverhead = moveOverhead + physicalBoardOverhead;
 
     // Make sure timeLeft is > 0 since we may use it as a divisor
     TimePoint timeLeft = std::max(TimePoint(1), limits.time[us] + limits.inc[us] * (mtg - 1)
-                                                  - moveOverhead * (2 + mtg));
+                                                  - reserveMs - totalOverhead * (2 + mtg));
 
     // x basetime (+ z increment)
     // If there is a healthy increment, timeLeft can exceed the actual available
@@ -134,8 +159,63 @@ void TimeManagement::init(Search::LimitsType& limits,
     // Limit the maximum possible time for this move
     optimumTime = TimePoint(std::max(1.0, optScale * timeLeft));
     maximumTime =
-      TimePoint(std::max(double(optimumTime), std::min(0.8097 * limits.time[us] - moveOverhead,
+      TimePoint(std::max(double(optimumTime), std::min(0.8097 * limits.time[us] - totalOverhead,
                                                        maxScale * optimumTime)));
+
+    // SunTzu Physical Board & Sudden Death budget model:
+    // t_base = (T - R - N * H) / N
+    if (physicalBoardOverhead > 0 || fastProfile)
+    {
+        TimePoint usableForThink =
+          limits.time[us] + limits.inc[us] * (mtg - 1) - reserveMs - totalOverhead * mtg;
+
+        if (usableForThink > 0)
+        {
+            TimePoint tBase = std::max(TimePoint(5 * scaleFactor), usableForThink / mtg);
+            optimumTime     = std::min(optimumTime, TimePoint(tBase * 0.90));
+            maximumTime     = std::min(maximumTime, TimePoint(tBase * 2.20));
+        }
+        else
+        {
+            // Clock is eating into PanicReserve or overhead budget: play nearly instant
+            criticalPanic = true;
+            optimumTime   = std::min(optimumTime, TimePoint(4 * scaleFactor));
+            maximumTime   = std::min(maximumTime, TimePoint(15 * scaleFactor));
+        }
+
+        // Panic thresholds on physical clock:
+        // Below 3 min (180s, or 36 * H), cut budget in half.
+        // Below 60s (or 22 * H), enter critical panic (< 1s response, depth limited).
+        // Below 15 * H, enter extreme panic (stop after depth 1-2, ~1ms think time).
+        TimePoint overheadScaled = totalOverhead / scaleFactor;
+        TimePoint panicWarnMs =
+          std::max(TimePoint(1), std::max((reserveMs / scaleFactor) * 3 / 2, overheadScaled * 36));
+        TimePoint panicCritMs =
+          std::max(TimePoint(1), std::max((reserveMs / scaleFactor) / 2, overheadScaled * 22));
+        TimePoint panicExtremeMs = std::max(TimePoint(1), overheadScaled * 15);
+
+        if (scaledTime < panicExtremeMs)
+        {
+            criticalPanic = true;
+            extremePanic  = true;
+            optimumTime   = TimePoint(1 * scaleFactor);
+            maximumTime   = TimePoint(5 * scaleFactor);
+        }
+        else if (scaledTime < panicCritMs)
+        {
+            criticalPanic   = true;
+            TimePoint capMs = std::min(TimePoint(400 * scaleFactor),
+                                       std::max(TimePoint(5 * scaleFactor),
+                                                (limits.time[us] - totalOverhead * 12) / 20));
+            optimumTime     = std::min(optimumTime, std::max(TimePoint(2 * scaleFactor), capMs / 3));
+            maximumTime     = std::min(maximumTime, capMs);
+        }
+        else if (scaledTime < panicWarnMs)
+        {
+            optimumTime = std::max(TimePoint(5 * scaleFactor), optimumTime / 2);
+            maximumTime = std::max(optimumTime, maximumTime / 2);
+        }
+    }
 
     if (options["Ponder"])
         optimumTime += optimumTime / 4;
