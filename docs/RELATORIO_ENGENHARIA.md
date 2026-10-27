@@ -54,9 +54,20 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
   - **Cenário Fraco (`SunTzu=true` vs `SunTzu=false` contra `Skill Level=14`, 40 partidas em `UHO.epd`):** **40V 0E 0D (`120 x 0` pts 3-1-0, 0 empates)** com `SunTzu=true`, contra `38V 2E 0D` (`116 x 2` pts 3-1-0) com `SunTzu=false`.
 
 ### 2.5 Fase 5 — Modos Pressão, Virada, Conversão e Syzygy
-- **Problema:** Desempatar lances quase equivalentes na raiz conforme o estado da partida.
-- **Solução:** Seleção na raiz em `src/suntzu.cpp` + integração Syzygy 3-4-5 peças.
-- **Resultados:** *(preencher na Fase 5)*
+- **Problema:** Desempatar lances quase equivalentes na raiz conforme o estado da partida, dificultando a defesa adversária sem nunca substituir um lance claramente superior por um truque, e converter finais com precisão de tablebase.
+- **Solução:**
+  - MultiPV interno até profundidade 7–8 quando um modo tático está ativo + avaliação curta das respostas naturais do oponente na raiz (limitada a 15% do orçamento de tempo do lance, com cancelamento automático se exceder).
+  - **Medida de armadilha (`trapScore`):** combina a unicidade da melhor resposta adversária ($v_2 - v_1$) e a contagem de respostas naturais que perdem $\ge 100$ cp.
+  - **Pressão (`PressureMargin`, padrão `12 cp`):** ativa contra oponentes `fraco`/`medio` entre $-150$ e $+300$ cp com $> 5$ min no relógio.
+  - **Virada (`SwindleMode`, padrão `true`):** ativa abaixo de $-150$ cp (ou $\le -350$ cp contra `forte`), penalizando trocas de peças não-peões e finais simples perdidos.
+  - **Conversão (`ConvertMode`, padrão `true`) + Syzygy (`SyzygyPath`):** ativa acima de $+300$ cp com margem de `15 cp`, recompensando trocas seguras e penalizando xeques e ameaças de captura do oponente; integrado às 70 tablebases Syzygy (35 WDL + 35 DTZ em `./syzygy`).
+- **Arquivos:** `src/suntzu.h`, `src/suntzu.cpp`, `src/search.h`, `src/search.cpp`, `src/engine.cpp`, `scripts/fetch_syzygy.sh`, `tests/test_suntzu_fase5.py`.
+- **Resultados:**
+  - **Tablebases Syzygy (`tests/test_suntzu_fase5.py`):** 35 arquivos WDL e 35 DTZ carregados (`Found 35 WDL and 35 DTZ tablebase files (up to 4-man)`), conversão exata em `KBNvK` e fallback seguro com diretório inexistente (0 crashes).
+  - **Ativação e desempate na raiz (`tests/test_suntzu_fase5.py`):** validado desligamento automático do modo Pressão contra perfil `forte` e com relógio $< 5$ min; no modo Virada em posição inferior, validada troca `c2c3 -> f3g5` (`eval=-8cp, troca=0cp, armadilha=29.8cp`).
+  - **Baterias de Virada e Conversão (`tests/test_suntzu_fase5.py`):** **4/4 partidas salvas (100%)** saindo com $-2$ peões no modo Virada; **4/4 vitórias (100%)** em posições ganhas no modo Conversão + Syzygy contra `SF_Base`.
+  - **Teste de Segurança (`SunTzu_F5` vs `SF_Base`, 60 partidas `4+0.04` em `UHO.epd` com todos os modos e Syzygy ligados):** `Elo: -17.39 +/- 40.73` (`LLR: -0.37` dentro de `[-2.94, 2.94]`), 0 crashes, 0 quedas de tempo.
+  - **Teste de Pressão / Cenário Enfraquecido (`SunTzu_F5` vs `Skill Level=15`, 40 partidas `3+0.03` em `UHO.epd`):** **39V 1E 0D (`118 x 1` pontos 3-1-0, 98.75% de aproveitamento)**.
 
 ### 2.6 Fase 6 — Console do Operador e Testes de Estresse
 - **Problema:** Eliminar erros humanos de digitação, perda de estado ou travamento durante o torneio.
@@ -69,3 +80,4 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
 
 - **Horizonte dinâmico agressivo ($N \in [12, 42]$) sem piso de múltiplos de $H$ (Fase 2):** Na primeira calibração do `timeman.cpp`, estimar $N$ abaixo de 20 lances no final da partida fazia o motor consumir a reserva e sofrer *time forfeit* quando partidas empatadas se estendiam além do lance 80 com atraso fixo $H$ por lance. Foi substituído por um piso conservador ($N \in [28, 52]$) combinado com gatilhos de pânico em $36H$, $22H$ e $15H$, reduzindo as quedas de seta de 5/30 para **0/40**.
 - **Retificação pura $\max(0, S_2 - S_1)$ sem banda morta de horizonte (Fase 4):** Ao truncar variações negativas a zero sem descontar o ruído natural de horizonte (~8 cp entre buscas rasas consecutivas), o valor esperado $\mathbb{E}[\max(0, \Delta)]$ de um oponente forte ($\mathbb{E}[\Delta]=0$) sofria viés positivo (~10–15 cp), classificando erroneamente motores fortes como médios após saltos táticos de horizonte. A introdução de uma banda morta de `8 cp` e correção negativa limitada (`-12 cp`) elevou a acurácia do classificador de 40% para **92.5%–95.0%**.
+- **Modo Virada com margem larga (`35–45 cp`) contra perfil `forte` em aberturas UHO (Fase 5):** Como as aberturas de teste `UHO.epd` já partem com desequilíbrio de $-100$ a $-150$ cp, ativar o modo Virada com margem de `35 cp` logo em $-150$ cp contra o Stockfish puro cedia centipeões sem induzir erros. Restringir a margem larga (`35–45 cp`) aos perfis `fraco`/`medio` e exigir $\le -350$ cp (com margem de `10 cp`) contra o perfil `forte`, além de limitar o MultiPV interno às profundidades $\le 7$, manteve a força intacta contra a base.

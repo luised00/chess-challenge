@@ -12,9 +12,9 @@ Este documento mapeia cada princípio estratégico de *A Arte da Guerra* (Sun Tz
 | *"Escolha o terreno"* | Livro Polyglot `.bin` nativo com pesos 3-1-0 ($3V + E$) | `src/book.cpp`, `src/book.h`, `tools/book_builder.py` | `OwnBook`, `BookFile`, `BookDepth`, `BookVariety` | **1000/1000 chaves** idênticas ao `python-chess`; resposta em **0.044 ms** (< 5 ms); fallback seguro testado |
 | *"Conhece o teu inimigo e conhece-te a ti mesmo"* | Modelo online do oponente por perda média de centipeões (EMA) | `src/suntzu.cpp`, `src/suntzu.h` | `SunTzu`, `OpponentProfile` | **92.5%–95.0% de acurácia** (40 partidas Forte vs Fraco até o lance 30) |
 | *"Na guerra, o objetivo é a vitória, não a campanha prolongada"* | Aversão dinâmica ao empate calibrada para pontuação 3-1-0 | `src/search.cpp`, `src/suntzu.cpp` | `DrawAversion` | **0.00 Elo vs SF Base** (`74 x 74` em 60 partidas); **40/40 vitórias (`120 x 0`)** vs oponente mais fraco (0 empates) |
-| *"Ataque onde ele não está preparado"* | Modo Pressão (medida de armadilha / unicidade da resposta adversária) | `src/suntzu.cpp`, `src/search.cpp` | `PressureMargin` | *(Fase 5)* |
-| *"Quando fraco, pareça forte"* | Modo Virada (*Swindle*: evita simplificações e mantém complexidade) | `src/suntzu.cpp`, `src/search.cpp` | `SwindleMode` | *(Fase 5)* |
-| *"Não encurrale um inimigo desesperado"* | Modo Conversão + Tablebases Syzygy de 3-4-5 peças | `src/suntzu.cpp`, `src/search.cpp` | `ConvertMode`, `SyzygyPath` | *(Fase 5)* |
+| *"Ataque onde ele não está preparado"* | Modo Pressão (medida de armadilha / unicidade da resposta adversária) | `src/suntzu.cpp`, `src/search.cpp` | `PressureMargin` | **39V 1E 0D (`118 x 1` pts 3-1-0)** vs `Skill 15`; desliga automático vs perfil `forte` ou relógio < 5 min |
+| *"Quando fraco, pareça forte"* | Modo Virada (*Swindle*: evita simplificações e mantém complexidade) | `src/suntzu.cpp`, `src/search.cpp` | `SwindleMode` | **4/4 partidas salvas (100%)** saindo de $-2$ peões vs oponente fraco; troca para lance de armadilha validada |
+| *"Não encurrale um inimigo desesperado"* | Modo Conversão + Tablebases Syzygy de 3-4-5 peças | `src/suntzu.cpp`, `src/search.cpp` | `ConvertMode`, `SyzygyPath` | **35 WDL + 35 DTZ** carregadas; **4/4 vitórias (100%)** em conversão contra a base; Elo neutro no teste de segurança |
 
 ---
 

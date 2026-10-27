@@ -26,6 +26,7 @@ bin/
 .venv/
 fastchess/
 partidas/
+syzygy/
 books/*.epd
 tests/results/*.pgn
 config.json
