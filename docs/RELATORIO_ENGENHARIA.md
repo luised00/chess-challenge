@@ -34,10 +34,14 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
   - **Testes de resposta rápida e Ponder (`tests/test_timeman_ponder.py`):** `go ponder` → `ponderhit` e `stop` validados; lance legal único respondido em `51.0 ms`; reserva de pânico crítico (< 60 s) respondendo em `1.3 ms`.
 
 ### 2.3 Fase 3 — Livro Polyglot com Pesos 3-1-0
-- **Problema:** Responder instantaneamente na abertura escolhendo linhas que maximizam $3V + E$.
-- **Solução:** Leitor Polyglot nativo em `src/book.cpp` validado contra `python-chess`.
-- **Arquivos:** `src/book.h`, `src/book.cpp`, `tools/book_builder.py`, `tests/book_keys_test.py`.
-- **Resultados:** *(preencher na Fase 3)*
+- **Problema:** Responder instantaneamente na abertura escolhendo linhas que maximizam $3V + E$ e evitando variantes conhecidas de empate rápido.
+- **Solução:** Leitor Polyglot nativo em `src/book.cpp` (tabela Zobrist de 781 chaves de 64 bits + busca binária em memória + validação estrita contra `MoveList<LEGAL>`), script gerador `tools/book_builder.py` com pesos $3V + E$ e filtro `books/evitar.txt`.
+- **Arquivos:** `src/book.h`, `src/book.cpp`, `src/position.h`, `src/position.cpp`, `src/search.cpp`, `src/engine.cpp`, `src/uci.cpp`, `tools/book_builder.py`, `tests/book_keys_test.py`, `books/suntzu_310.bin`, `books/evitar.txt`, `books/ORIGEM.md`.
+- **Resultados:**
+  - **Conferência de chaves (`tests/book_keys_test.py`):** **1000/1000 (100.0%)** posições aleatórias e especiais (incluindo peão en passant cravado) idênticas a `chess.polyglot.zobrist_hash` do `python-chess`.
+  - **Tempo de resposta:** média de **0.044 ms** e máximo de **0.082 ms** por lance do livro (meta < 5 ms).
+  - **Robustez:** arquivo ausente e arquivo corrompido testados — motor emite `info string` e joga normalmente sem crash.
+  - **Match SPRT (`OwnBook=true` com `suntzu_310.bin` vs `sf-base`, 60 partidas `2+0.02`):** `Elo: -5.79 +/- 37.74` (`V=5 E=49 D=6 | pontos 3-1-0: 64 x 67`), economizando tempo de relógio nos primeiros 16 meios-lances com 0 crashes.
 
 ### 2.4 Fase 4 — Modelo do Oponente e Aversão ao Empate
 - **Problema:** Calibrar o valor do empate para a regra 3-1-0 conforme a força estimada do oponente.

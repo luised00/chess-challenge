@@ -23,6 +23,7 @@ tests/bench_tmp.epd
 
 # SunTzu local artifacts and test tools
 bin/
+.venv/
 fastchess/
 partidas/
 books/*.epd

@@ -1,0 +1,11 @@
+# Linhas conhecidas por altíssima taxa de empate rápido / repetição simétrica
+# Formato: prefixo de lances em notação UCI (separados por espaço)
+
+# Berlim (Ruy Lopez) - final da parede de Berlim (empate precoce)
+e2e4 e7e5 g1f3 b8c6 f1b5 g8f6 e1g1 f6e4 d2d4 f8e7 d1e2 e4d6 b5c6 b7c6 d4e5 d6b7
+
+# Petroff simétrica com troca rápida de damas
+e2e4 e7e5 g1f3 g8f6 f3e5 d7d6 e5f3 f6e4 d2d3 e4f6 d3d4 d6d5
+
+# Francesa Variante das Trocas puramente simétrica
+e2e4 e7e6 d2d4 d7d5 e4d5 e6d5 g1f3 g8f6 f1d3 f8d6 e1g1 e8g8
