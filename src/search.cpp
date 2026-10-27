@@ -276,12 +276,17 @@ void Search::Worker::start_searching() {
     main_manager()->bestPreviousScore        = bestThread->rootMoves[0].score;
     main_manager()->bestPreviousAverageScore = bestThread->rootMoves[0].averageScore;
 
-    // Phase 4: Update SunTzu opponent model and emit detected profile info string
+    // Phase 4 & 5: Update SunTzu opponent model, apply tactical root selection, and emit info string
     if (int(options["SunTzu"]) && !limits.infinite && !limits.mate)
     {
         SunTzu::global_state().on_search_finished(
           rootPos, bestThread->rootDepth, bestThread->rootMoves[0].score, options);
-        if (limits.use_time_management() || limits.movetime)
+
+        if (!skill.enabled())
+            apply_suntzu_root_selection(*bestThread, uciPvSent);
+
+        if (limits.use_time_management() || limits.movetime
+            || SunTzu::global_state().last_mode() != SunTzu::Mode::None)
             sync_cout << "info string " << SunTzu::global_state().status_info_string(options)
                       << sync_endl;
     }
@@ -383,11 +388,27 @@ bool Search::Worker::iterative_deepening() {
 
         // Save the last iteration's scores before the first PV line is searched and
         // all the move scores except the (new) PV are set to -VALUE_INFINITE.
+        usize iterMultiPV = multiPV;
+        Depth maxMultiPVDepth = (limits.depth && !limits.use_time_management()) ? 8 : 7;
+        if (mainThread && int(options["SunTzu"]) && !skill.enabled() && !limits.infinite
+            && !limits.mate && !limits.nodes && !tbConfig.rootInTB && rootDepth <= maxMultiPVDepth)
+        {
+            int estCp = (rootDepth == 1)
+                          ? SunTzu::global_state().last_eval_cp()
+                          : (is_decisive(rootMoves[0].score)
+                               ? (rootMoves[0].score > 0 ? 1000 : -1000)
+                               : int(UCIEngine::to_cp(rootMoves[0].score, rootPos)));
+            if (SunTzu::global_state().determine_mode(rootPos, estCp, limits, mainThread->tm,
+                                                      options)
+                != SunTzu::Mode::None)
+                iterMultiPV = std::min(std::max(multiPV, usize(3)), rootMoves.size());
+        }
+
         for (usize i = 0; i < rootMoves.size(); ++i)
         {
             rootMoves[i].previousScore      = rootMoves[i].score;
             rootMoves[i].previousPV         = rootMoves[i].pv;
-            rootMoves[i].previousScoreExact = i < multiPV;
+            rootMoves[i].previousScoreExact = i < iterMultiPV;
         }
 
         usize pvFirst = pvLast = 0;
@@ -396,7 +417,7 @@ bool Search::Worker::iterative_deepening() {
             searchAgainCounter++;
 
         // MultiPV loop: we perform a full root search for each PV line
-        for (pvIdx = 0; pvIdx < multiPV; ++pvIdx)
+        for (pvIdx = 0; pvIdx < iterMultiPV; ++pvIdx)
         {
             if (pvIdx == pvLast)
             {
@@ -523,7 +544,7 @@ bool Search::Worker::iterative_deepening() {
                 }
 
                 // Finally, we mark all loss scores from partially searched moves as inexact.
-                for (usize i = pvIdx + 1; i < multiPV; ++i)
+                for (usize i = pvIdx + 1; i < iterMultiPV; ++i)
                     if (rootMoves[i].is_exact_loss())
                         rootMoves[i].inexactLower = true;
             }
@@ -531,14 +552,28 @@ bool Search::Worker::iterative_deepening() {
             // Sort the PV lines searched so far and update the GUI
             std::stable_sort(rootMoves.begin() + pvFirst, rootMoves.begin() + pvIdx + 1);
 
-            if (mainThread && !threads.stop && (pvIdx + 1 == multiPV || nodes > NODES_LIMIT_OUTPUT))
+            if (mainThread && !threads.stop
+                && (pvIdx + 1 == iterMultiPV || nodes > NODES_LIMIT_OUTPUT))
             {
                 main_manager()->output_pv(*this, threads, tt, rootDepth);
-                uciPvSent = (pvIdx + 1 == multiPV);
+                uciPvSent = (pvIdx + 1 == iterMultiPV);
             }
 
             if (threads.stop)
                 break;
+        }
+
+        if (!threads.stop && iterMultiPV >= 2)
+        {
+            for (usize i = 0; i < iterMultiPV; ++i)
+            {
+                if (rootMoves[i].score != -VALUE_INFINITE && !rootMoves[i].is_inexact())
+                {
+                    rootMoves[i].sunTzuScore = rootMoves[i].score;
+                    rootMoves[i].sunTzuPV    = rootMoves[i].pv;
+                    rootMoves[i].sunTzuDepth = rootDepth;
+                }
+            }
         }
 
         const bool forgottenMate = lastBestMoveScore != -VALUE_INFINITE
@@ -677,6 +712,342 @@ bool Search::Worker::iterative_deepening() {
                              skill.best ? skill.best : skill.pick_best(rootMoves, multiPV)));
 
     return uciPvSent;
+}
+
+
+void Search::Worker::apply_suntzu_root_selection(Worker& bestThread, bool& uciPvSent) {
+    if (!int(options["SunTzu"]) || limits.infinite || limits.mate || limits.nodes
+        || tbConfig.rootInTB || bestThread.rootMoves.size() <= 1)
+    {
+        SunTzu::global_state().record_mode_status(SunTzu::Mode::None, "padrao");
+        return;
+    }
+
+    const RootMove& bestRm = bestThread.rootMoves[0];
+    if (is_decisive(bestRm.score))
+    {
+        SunTzu::global_state().record_mode_status(SunTzu::Mode::None, "decisivo");
+        return;
+    }
+
+    int          bestCp = int(UCIEngine::to_cp(bestRm.score, rootPos));
+    SunTzu::Mode mode =
+      SunTzu::global_state().determine_mode(rootPos, bestCp, limits, main_manager()->tm, options);
+
+    if (mode == SunTzu::Mode::None)
+    {
+        SunTzu::global_state().record_mode_status(SunTzu::Mode::None, "padrao");
+        return;
+    }
+
+    int maxMarginCp = SunTzu::global_state().mode_margin_cp(mode, options);
+
+    // Sync MultiPV depth-10 candidate scores from main thread if bestThread is a worker thread
+    if (&bestThread != this)
+    {
+        for (auto& brm : bestThread.rootMoves)
+        {
+            auto it = std::find(rootMoves.begin(), rootMoves.end(), brm.pv[0]);
+            if (it != rootMoves.end() && it->sunTzuDepth > brm.sunTzuDepth)
+            {
+                brm.sunTzuScore = it->sunTzuScore;
+                brm.sunTzuDepth = it->sunTzuDepth;
+                brm.sunTzuPV    = it->sunTzuPV;
+            }
+        }
+    }
+
+    std::vector<SunTzu::CandidateMetrics> candidates;
+    candidates.reserve(3);
+
+    SunTzu::CandidateMetrics c0;
+    c0.move    = bestRm.pv[0];
+    c0.rootIdx = 0;
+    c0.evalCp  = bestCp;
+    candidates.push_back(c0);
+
+    for (usize idx = 1; idx < bestThread.rootMoves.size() && candidates.size() < 3; ++idx)
+    {
+        const RootMove& rm     = bestThread.rootMoves[idx];
+        bool            accept = false;
+        int             candCp = bestCp - maxMarginCp - 1;
+
+        if (rm.score != -VALUE_INFINITE && !rm.is_inexact())
+        {
+            if (is_loss(rm.score))
+                continue;
+            candCp = is_decisive(rm.score) ? (rm.score > 0 ? 1000 : -1000)
+                                           : int(UCIEngine::to_cp(rm.score, rootPos));
+            if (bestCp - candCp <= maxMarginCp)
+                accept = true;
+        }
+        else if (rm.sunTzuDepth > 0 && bestRm.sunTzuDepth == rm.sunTzuDepth
+                 && rm.sunTzuScore != -VALUE_INFINITE && !is_loss(rm.sunTzuScore))
+        {
+            int bestStCp = int(UCIEngine::to_cp(bestRm.sunTzuScore, rootPos));
+            int candStCp = int(UCIEngine::to_cp(rm.sunTzuScore, rootPos));
+            int diffSt   = bestStCp - candStCp;
+
+            bool avgOk = true;
+            if (rm.averageScore != -VALUE_INFINITE && bestRm.averageScore != -VALUE_INFINITE)
+            {
+                int avgDiff = int(UCIEngine::to_cp(bestRm.averageScore, rootPos))
+                            - int(UCIEngine::to_cp(rm.averageScore, rootPos));
+                avgOk = (avgDiff <= maxMarginCp + 12);
+            }
+
+            if (avgOk && diffSt >= -5 && diffSt <= maxMarginCp)
+            {
+                candCp = bestCp - std::max(0, diffSt);
+                accept = true;
+            }
+        }
+
+        if (accept)
+        {
+            SunTzu::CandidateMetrics cm;
+            cm.move    = rm.pv[0];
+            cm.rootIdx = idx;
+            cm.evalCp  = candCp;
+            candidates.push_back(cm);
+        }
+    }
+
+    if (candidates.size() <= 1)
+    {
+        SunTzu::global_state().record_mode_status(mode, "unico_na_margem");
+        return;
+    }
+
+    // Compute 15% move budget for final candidate evaluation
+    TimePoint startSel = now();
+    TimePoint budget15 = 400;
+    if (limits.use_time_management())
+    {
+        TimePoint opt15 = std::max(TimePoint(4), main_manager()->tm.optimum() * 15 / 100);
+        TimePoint remMax = std::max(
+          TimePoint(0), main_manager()->tm.maximum() - main_manager()->tm.elapsed_time() - 5);
+        budget15 = std::min(opt15, remMax);
+    }
+    else if (limits.movetime)
+    {
+        budget15 = std::max(TimePoint(4), limits.movetime * 15 / 100);
+    }
+
+    if (budget15 < 3)
+    {
+        SunTzu::global_state().record_mode_status(mode, "cancelado_15pct_tempo");
+        return;
+    }
+
+    Stack   stack[MAX_PLY + 10] = {};
+    Stack*  ss                  = stack + 7;
+    PVMoves pv, subPv;
+
+    for (int i = 0; i < MAX_PLY + 10; ++i)
+    {
+        stack[i].continuationHistory           = &continuationHistory[0][0][NO_PIECE][0];
+        stack[i].continuationCorrectionHistory = &continuationCorrectionHistory[NO_PIECE][0];
+        stack[i].staticEval                    = VALUE_NONE;
+    }
+    for (int i = 0; i <= MAX_PLY + 2; ++i)
+        (ss + i)->ply = i;
+
+    ss->pv          = &pv;
+    (ss + 1)->pv    = &pv;
+    (ss + 2)->pv    = &subPv;
+    ss->inCheck     = bool(rootPos.checkers());
+    ss->staticEval  = VALUE_ZERO;
+    (ss + 1)->staticEval = VALUE_ZERO;
+
+    accumulatorStack.reset();
+
+    Color us            = rootPos.side_to_move();
+    int   nonPawnBefore = SunTzu::non_pawn_material_cp(rootPos);
+    Depth replyDepth    = std::clamp(int(bestThread.rootDepth) - 5, 3, 7);
+    if (budget15 < 25)
+        replyDepth = std::min<Depth>(replyDepth, 3);
+
+    main_manager()->sunTzuDeadline = startSel + budget15;
+    main_manager()->callsCnt       = 32;
+    threads.stop                   = false;
+    bool abortedByTime             = false;
+
+    struct ReplyEval {
+        Move move;
+        int  qCp;
+        int  searchCp;
+        int  nonPawnAfter;
+        bool hasOurQueen;
+    };
+
+    for (auto& c : candidates)
+    {
+        if (threads.stop.load(std::memory_order_relaxed) || now() >= main_manager()->sunTzuDeadline)
+        {
+            abortedByTime = true;
+            break;
+        }
+
+        c.givesCheck     = rootPos.gives_check(c.move);
+        c.advances50Move = rootPos.capture_stage(c.move)
+                        || type_of(rootPos.moved_piece(c.move)) == PAWN;
+
+        StateInfo stCand;
+        ss->inCheck = bool(rootPos.checkers());
+        do_move(rootPos, c.move, stCand, c.givesCheck, ss);
+
+        bool              drawAfterCand = rootPos.is_draw(1);
+        MoveList<LEGAL>   oppMoves(rootPos);
+
+        if (oppMoves.size() == 0)
+        {
+            if (rootPos.checkers())
+            {
+                c.immediateMate = true;
+                c.replyBestCp   = 1000;
+                c.replySecondCp = 1000;
+            }
+            else
+            {
+                c.immediateDraw = true;
+                c.replyBestCp   = 0;
+                c.replySecondCp = 0;
+            }
+        }
+        else
+        {
+            c.immediateDraw = drawAfterCand;
+            std::vector<ReplyEval> replies;
+            replies.reserve(oppMoves.size());
+
+            for (const auto& m : oppMoves)
+            {
+                if (rootPos.gives_check(m))
+                    c.oppChecks++;
+                if (rootPos.capture(m) && type_of(rootPos.piece_on(m.to_sq())) >= KNIGHT)
+                    c.oppPieceThreats++;
+
+                if (threads.stop.load(std::memory_order_relaxed)
+                    || now() >= main_manager()->sunTzuDeadline)
+                {
+                    abortedByTime = true;
+                    break;
+                }
+
+                StateInfo stReply;
+                (ss + 1)->inCheck = bool(rootPos.checkers());
+                do_move(rootPos, m, stReply, ss + 1);
+
+                subPv.clear();
+                (ss + 2)->pv = &subPv;
+                Value qv     = qsearch<PV>(rootPos, ss + 2, -VALUE_INFINITE, VALUE_INFINITE);
+                int   qCp    = is_decisive(qv) ? (qv > 0 ? 1000 : -1000)
+                                               : int(UCIEngine::to_cp(qv, rootPos));
+                undo_move(rootPos, m);
+
+                replies.push_back({m, qCp, qCp, nonPawnBefore, true});
+            }
+
+            if (!abortedByTime)
+            {
+                // Opponent (~us) minimizes our (us) evaluation
+                std::stable_sort(replies.begin(), replies.end(),
+                                 [](const ReplyEval& a, const ReplyEval& b) {
+                                     return a.qCp < b.qCp;
+                                 });
+
+                usize natCount = std::min<usize>(6, replies.size());
+                Depth subDepth = std::max<Depth>(1, replyDepth - 1);
+
+                for (usize k = 0; k < natCount; ++k)
+                {
+                    if (threads.stop.load(std::memory_order_relaxed)
+                        || now() >= main_manager()->sunTzuDeadline)
+                    {
+                        abortedByTime = true;
+                        break;
+                    }
+
+                    StateInfo stReply;
+                    (ss + 1)->inCheck = bool(rootPos.checkers());
+                    do_move(rootPos, replies[k].move, stReply, ss + 1);
+
+                    subPv.clear();
+                    (ss + 2)->pv            = &subPv;
+                    replies[k].nonPawnAfter = SunTzu::non_pawn_material_cp(rootPos);
+                    replies[k].hasOurQueen  = (rootPos.count<QUEEN>(us) > 0);
+
+                    Value sv = search<PV>(rootPos, ss + 2, -VALUE_INFINITE, VALUE_INFINITE,
+                                          subDepth, false);
+                    replies[k].searchCp = is_decisive(sv) ? (sv > 0 ? 1000 : -1000)
+                                                          : int(UCIEngine::to_cp(sv, rootPos));
+                    undo_move(rootPos, replies[k].move);
+
+                    if (threads.stop.load(std::memory_order_relaxed)
+                        || now() >= main_manager()->sunTzuDeadline)
+                    {
+                        abortedByTime = true;
+                        break;
+                    }
+                }
+
+                if (!abortedByTime)
+                {
+                    std::stable_sort(replies.begin(), replies.begin() + natCount,
+                                     [](const ReplyEval& a, const ReplyEval& b) {
+                                         return a.searchCp < b.searchCp;
+                                     });
+
+                    int v1            = replies[0].searchCp;
+                    c.replyBestCp     = v1;
+                    c.replySecondCp   = (natCount >= 2) ? replies[1].searchCp : v1;
+                    c.nonPawnAfterCp  = replies[0].nonPawnAfter;
+                    c.tradedNonPawnCp = std::max(0, nonPawnBefore - c.nonPawnAfterCp);
+                    c.keepsOurQueen   = replies[0].hasOurQueen;
+
+                    for (usize k = 1; k < natCount; ++k)
+                    {
+                        int diff = replies[k].searchCp - v1;
+                        if (diff >= 100)
+                            c.blunders100++;
+                        else if (diff >= 50)
+                            c.mistakes50++;
+                    }
+                }
+            }
+        }
+
+        undo_move(rootPos, c.move);
+        if (abortedByTime)
+            break;
+    }
+
+    main_manager()->sunTzuDeadline = 0;
+    threads.stop                   = true;
+
+    if (abortedByTime)
+    {
+        SunTzu::global_state().record_mode_status(mode, "cancelado_15pct_tempo");
+        return;
+    }
+
+    usize chosenIdx =
+      SunTzu::global_state().select_root_move(mode, maxMarginCp, candidates, rootPos, options);
+
+    if (chosenIdx > 0 && chosenIdx < candidates.size())
+    {
+        usize rmIdx    = candidates[chosenIdx].rootIdx;
+        auto& chosenRm = bestThread.rootMoves[rmIdx];
+        if (chosenRm.score == -VALUE_INFINITE && chosenRm.sunTzuScore != -VALUE_INFINITE)
+        {
+            chosenRm.score = chosenRm.uciScore = chosenRm.sunTzuScore;
+            chosenRm.pv                        = chosenRm.sunTzuPV;
+            chosenRm.unset_inexact();
+        }
+        std::swap(bestThread.rootMoves[0], bestThread.rootMoves[rmIdx]);
+        uciPvSent = false;
+    }
 }
 
 
@@ -2179,6 +2550,13 @@ void SearchManager::check_time(Search::Worker& worker) {
     // We should not stop pondering until told so by the GUI
     if (ponder)
         return;
+
+    if (sunTzuDeadline > 0)
+    {
+        if (now() >= sunTzuDeadline)
+            worker.threads.stop = true;
+        return;
+    }
 
     if ((worker.limits.use_time_management() && (elapsed > tm.maximum() || stopOnPonderhit))
         || (worker.limits.movetime && elapsed >= worker.limits.movetime)

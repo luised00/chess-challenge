@@ -136,6 +136,12 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
 
     options.add("DrawAversion", Option(25, 0, 150));
 
+    options.add("PressureMargin", Option(12, 0, 50));
+
+    options.add("SwindleMode", Option(true));
+
+    options.add("ConvertMode", Option(true));
+
     options.add("nodestime", Option(0, 0, 10000));
 
     options.add("UCI_Chess960", Option(false));

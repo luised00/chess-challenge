@@ -163,6 +163,9 @@ struct RootMove {
     int         tbRank             = 0;
     Value       tbScore;
     RootPVMoves pv, previousPV;
+    Value       sunTzuScore = -VALUE_INFINITE;
+    Depth       sunTzuDepth = 0;
+    RootPVMoves sunTzuPV;
 };
 
 using RootMoves = std::vector<RootMove>;
@@ -311,6 +314,7 @@ class SearchManager: public ISearchManager {
     Value                bestPreviousScore;
     Value                bestPreviousAverageScore;
     bool                 stopOnPonderhit;
+    TimePoint            sunTzuDeadline = 0;
 
     const UpdateContext& updates;
 };
@@ -357,6 +361,7 @@ class Worker {
 
    private:
     bool iterative_deepening();
+    void apply_suntzu_root_selection(Worker& bestThread, bool& uciPvSent);
 
     void do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss);
     void
