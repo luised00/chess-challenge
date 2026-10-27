@@ -50,11 +50,30 @@ make -j profile-build ARCH=native       # Build otimizada com PGO para a máquin
 
 ---
 
-## Testes (SPRT e Pontuação 3-1-0)
+## Operação no Tabuleiro Físico (Console Anti-Crash)
+
+```bash
+# Iniciar partida jogando de Brancas (ou --color pretas)
+python3 tools/operator_console/console.py --color brancas
+
+# Retomada instantânea (< 1s) do estado salvo a cada lance
+python3 tools/operator_console/console.py --resume partidas/ultima.fen
+```
+
+---
+
+## Testes (SPRT, Pontuação 3-1-0 e Suítes de Fase)
 
 ```bash
 # Rodar match SPRT contra a base e calcular pontuação 3-1-0
 ./tests/sprt.sh bin/suntzu-native bin/sf-base teste_base
+
+# Suítes automatizadas de engenharia (Fases 2 a 6)
+python3 tests/test_timeman_ponder.py
+python3 tests/book_keys_test.py
+python3 tests/test_suntzu_fase4.py
+python3 tests/test_suntzu_fase5.py
+python3 tests/test_console_fase6.py
 ```
 
 ---

@@ -21,14 +21,36 @@
 
 ---
 
-## 2. Comandos Rápidos do Console
+## 2. Como Iniciar e Operar o Console
+
+### Inicialização da Partida
+
+```bash
+# Jogando de Brancas (padrão 25 min sudden death, 4 threads, 512 MB Hash, Ponder ligado)
+python3 tools/operator_console/console.py --color brancas
+
+# Jogando de Pretas
+python3 tools/operator_console/console.py --color pretas
+
+# Retomada de emergência em menos de 1 segundo após queda de energia/fechamento
+python3 tools/operator_console/console.py --resume partidas/ultima.fen
+
+# Modo econômico de bateria (para uso fora da tomada: 2 threads, 128 MB Hash, sem Ponder)
+python3 tools/operator_console/console.py --color brancas --eco
+```
+
+### Comandos Rápidos Durante a Partida
 
 | Comando | Ação |
 | --- | --- |
-| `e2e4` ou `e4` / `Cxf7` | Registra lance do adversário (pede confirmação antes de enviar ao motor) |
-| `u` | Desfaz o último lance digitado errado |
-| `t 12:34` | Corrige o nosso tempo restante no motor para 12 min e 34 s |
-| `--resume partidas/ultima.fen` | Recupera a partida em menos de 20 s após reinício |
+| `e2e4` / `e4` / `Cf3` / `Cxf7` / `0-0` / `e8=D` | Registra lance do adversário em UCI, SAN Inglês ou SAN Português (exibe diagrama ASCII e pede `Enter` antes de enviar ao motor) |
+| `u` | Desfaz o último par de lances (caso um lance errado tenha sido confirmado) |
+| `t 12:34` | Sincroniza o nosso tempo restante no motor para 12 min e 34 s |
+| `t opp 14:20` | Sincroniza o tempo restante do adversário para 14 min e 20 s |
+| `perfil fraco` (ou `medio` / `forte` / `auto`) | Força manualmente o perfil do oponente na doutrina SunTzu |
+| `rapido` / `normal` | Alterna `TimeProfile` (quando o operador estiver demorando mais de 8 s por lance, use `rapido`) |
+| `fen` | Exibe o FEN atual e a lista completa de lances UCI na tela |
+| `--resume partidas/ultima.fen` | Recupera a partida em menos de 1 s (meta < 20 s) após reinício |
 
 ---
 

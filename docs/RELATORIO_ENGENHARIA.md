@@ -70,9 +70,19 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
   - **Teste de Pressão / Cenário Enfraquecido (`SunTzu_F5` vs `Skill Level=15`, 40 partidas `3+0.03` em `UHO.epd`):** **39V 1E 0D (`118 x 1` pontos 3-1-0, 98.75% de aproveitamento)**.
 
 ### 2.6 Fase 6 — Console do Operador e Testes de Estresse
-- **Problema:** Eliminar erros humanos de digitação, perda de estado ou travamento durante o torneio.
-- **Solução:** Console em `tools/operator_console/` com watchdog, autosave FEN/PGN e alertas de regra (repetição tripla / 50 lances).
-- **Resultados:** *(preencher na Fase 6)*
+- **Problema:** Eliminar erros humanos de digitação, perda de estado em caso de queda de energia/processo ou travamento durante o torneio no tabuleiro físico.
+- **Solução:**
+  - Console 100% offline em `tools/operator_console/console.py` (Python + `python-chess`) com parser flexível em UCI (`e2e4`, `e7e8q`), SAN Inglês (`Nf3`, `Nxe5`) e SAN Português (`Cf3`, `Cxf7`, `Bb5`, `Td1`, `Dd4`, `Rf1`, `0-0`, `e8=D`).
+  - Rejeição imediata de lances ilegais/ambíguos antes de tocar no motor, confirmação visual com diagrama ASCII, e banner em caixa alta com alertas explícitos de tabuleiro físico (`CAPTURA EM x`, `ROQUE PEQUENO/GRANDE`, `CAPTURA EN PASSANT`, `PROMOVE A DAMA`, `XEQUE NO REI ADVERSÁRIO`).
+  - Ciclo completo de Ponder (`go ponder` → `ponderhit` imediato ou `stop` + nova busca), comando `u` (desfazer último par de lances), comando `t mm:ss` (sincronizar relógio físico), autosave transacional a cada lance em `partidas/ultima.fen` e `partidas/ultima.pgn` e retomada instantânea (`--resume partidas/ultima.fen`).
+  - **Watchdog Anti-Crash (`WatchdogEngine`):** antes de cada lance, envia `isready` com timeout configurável (padrão `3.0 s`); se o motor não responder `readyok` ou se o processo cair, mata o processo, reinicia o motor automaticamente, restaura todas as opções UCI e a posição atual e calcula o lance sem interromper a partida.
+  - **Alertas de Regra FIDE:** detecta repetição tripla e regra dos 50 lances e recomenda ativamente reivindicar o empate quando a avaliação está abaixo de $-50$ cp (ou não reivindicar quando estamos ganhando).
+- **Arquivos:** `tools/operator_console/__init__.py`, `tools/operator_console/__main__.py`, `tools/operator_console/console.py`, `tests/test_console_fase6.py`.
+- **Resultados:**
+  - **1000 partidas ultra-rápidas de estresse (`bin/suntzu-native` com livro, Syzygy e todos os modos SunTzu vs `bin/sf-base`, `tc=0.35+0.01`, `concurrency=16`):** **1000/1000 partidas concluídas (`228` normais + `772` adjudicações), 0 crashes, 0 lances ilegais, 0 derrotas por tempo (`time forfeit`)**.
+  - **200 partidas com Sanitizers (`ARCH=native debug=yes sanitize=address,undefined` com `-fsanitize=address,undefined -D_GLIBCXX_DEBUG`):** **200/200 partidas concluídas (`200` terminações normais), 0 erros de memória (ASan), 0 comportamentos indefinidos (UBSan), 0 asserções da STL**.
+  - **50 partidas de estresse com Ponder ativo (`tests/test_console_fase6.py`):** **50/50 partidas concluídas (`5540` meios-lances, `1444` `ponderhit`s — 56.4% de acerto nas buscas ponderadas — e `1118` `stop`s), 0 crashes**.
+  - **Testes de Watchdog e Retomada (`tests/test_console_fase6.py`):** recuperação automática validada após `SIGKILL` (morte abrupta do processo) e `SIGSTOP` (congelamento do processo); retomada via `--resume partidas/ultima.fen` concluída em **`161.0 ms`** (meta $< 20\text{ s}$).
 
 ---
 
