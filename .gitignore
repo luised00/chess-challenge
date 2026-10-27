@@ -20,3 +20,11 @@ tsan.supp
 __pycache__/
 tests/syzygy
 tests/bench_tmp.epd
+
+# SunTzu local artifacts and test tools
+bin/
+fastchess/
+partidas/
+books/*.epd
+tests/results/*.pgn
+
