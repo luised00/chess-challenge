@@ -43,6 +43,7 @@
 #include "nnue/network.h"
 #include "nnue/nnue_accumulator.h"
 #include "position.h"
+#include "suntzu.h"
 #include "syzygy/tbprobe.h"
 #include "thread.h"
 #include "timeman.h"
@@ -202,6 +203,7 @@ void Search::Worker::start_searching() {
 
     main_manager()->tm.init(limits, rootPos.side_to_move(), rootPos.game_ply(), options,
                             main_manager()->originalTimeAdjust, rootPos.count<ALL_PIECES>());
+    SunTzu::global_state().update_search_cache(rootPos, options);
     tt.new_search();
     main_manager()->updates.onStart();
 
@@ -273,6 +275,16 @@ void Search::Worker::start_searching() {
 
     main_manager()->bestPreviousScore        = bestThread->rootMoves[0].score;
     main_manager()->bestPreviousAverageScore = bestThread->rootMoves[0].averageScore;
+
+    // Phase 4: Update SunTzu opponent model and emit detected profile info string
+    if (int(options["SunTzu"]) && !limits.infinite && !limits.mate)
+    {
+        SunTzu::global_state().on_search_finished(
+          rootPos, bestThread->rootDepth, bestThread->rootMoves[0].score, options);
+        if (limits.use_time_management() || limits.movetime)
+            sync_cout << "info string " << SunTzu::global_state().status_info_string(options)
+                      << sync_endl;
+    }
 
     if (bestThread->rootMoves[0].pv.size() == 1
         && bestThread->rootMoves[0].extract_ponder_from_tt(tt, rootPos))
@@ -770,9 +782,10 @@ Value Search::Worker::search(
     depth = std::min(depth, MAX_PLY - 1);
 
     // Check if we have an upcoming move that draws by repetition
-    if (!rootNode && alpha < VALUE_DRAW && pos.upcoming_repetition(ss->ply))
+    Value dBias = SunTzu::global_state().draw_value(rootPos.side_to_move(), pos.side_to_move(), 0, options);
+    if (!rootNode && alpha < VALUE_DRAW + dBias && pos.upcoming_repetition(ss->ply))
     {
-        alpha = value_draw(nodes);
+        alpha = value_draw(nodes) + dBias;
         if (alpha >= beta)
             return alpha;
     }
@@ -823,7 +836,8 @@ Value Search::Worker::search(
         // Step 2. Check for aborted search or immediate draw
         if (threads.stop.load(std::memory_order_relaxed) || pos.is_draw(ss->ply)
             || ss->ply >= MAX_PLY)
-            return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos) : value_draw(nodes);
+            return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos)
+                                                        : draw_score(pos.side_to_move());
 
         // Step 3. Mate distance pruning. Even if we mate at the next move our score
         // would be at best mate_in(ss->ply + 1), but if alpha is already bigger because
@@ -1599,7 +1613,7 @@ moves_loop:  // When in check, search starts here
     // must be a mate or a stalemate (just a fail low score if we are in a
     // singular extension search).
     if (!moveCount)
-        bestValue = excludedMove ? alpha : ss->inCheck ? mated_in(ss->ply) : VALUE_DRAW;
+        bestValue = excludedMove ? alpha : ss->inCheck ? mated_in(ss->ply) : draw_score(us, false);
 
     // If there is a move that produces search value greater than alpha,
     // we update the stats of searched moves.
@@ -1695,9 +1709,10 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     assert(PvNode || (alpha == beta - 1));
 
     // Check if we have an upcoming move that draws by repetition
-    if (alpha < VALUE_DRAW && pos.upcoming_repetition(ss->ply))
+    Value dBias = SunTzu::global_state().draw_value(rootPos.side_to_move(), pos.side_to_move(), 0, options);
+    if (alpha < VALUE_DRAW + dBias && pos.upcoming_repetition(ss->ply))
     {
-        alpha = value_draw(nodes);
+        alpha = value_draw(nodes) + dBias;
         if (alpha >= beta)
             return alpha;
     }
@@ -1728,7 +1743,8 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     // Step 2. Check for an immediate draw or maximum ply reached
     if (pos.is_draw(ss->ply) || ss->ply >= MAX_PLY)
-        return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos) : VALUE_DRAW;
+        return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos)
+                                                    : draw_score(pos.side_to_move(), false);
 
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
@@ -1901,7 +1917,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         if (!(pawn_single_push_bb(us, pos.pieces(us, PAWN)) & ~pos.pieces())
             && !pos.non_pawn_material(us) && type_of(pos.captured_piece()) >= KNIGHT
             && !MoveList<LEGAL>(pos).size())
-            bestValue = VALUE_DRAW;
+            bestValue = draw_score(us, false);
     }
 
     if (!is_decisive(bestValue) && bestValue > beta)
@@ -1929,6 +1945,11 @@ int Search::Worker::reduction(bool i, Depth d, int mn, int delta) const {
 // stopped based on predefined thresholds like time limits or nodes searched.
 TimePoint Search::Worker::elapsed() const {
     return main_manager()->tm.elapsed([this]() { return threads.nodes_searched(); });
+}
+
+Value Search::Worker::draw_score(Color stm, bool randomize) const {
+    Value base = randomize ? (VALUE_DRAW - 1 + Value(nodes & 0x2)) : VALUE_DRAW;
+    return base + SunTzu::global_state().draw_value(rootPos.side_to_move(), stm, 0, options);
 }
 
 

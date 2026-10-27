@@ -269,6 +269,14 @@ void UCIEngine::bench(std::istream& args) {
 
     std::vector<std::string> list = Benchmark::setup_bench(engine.fen(), args);
 
+    // Ensure bench always measures baseline Stockfish node signature (SunTzu=false)
+    bool prevSunTzu = int(options["SunTzu"]) != 0;
+    if (prevSunTzu)
+    {
+        std::istringstream ssOff("name SunTzu value false");
+        setoption(ssOff);
+    }
+
     num = count_if(list.begin(), list.end(),
                    [](const std::string& s) { return s.find("go ") == 0 || s.find("eval") == 0; });
 
@@ -310,6 +318,12 @@ void UCIEngine::bench(std::istream& args) {
             engine.search_clear();  // search_clear may take a while
             elapsed = now();
         }
+    }
+
+    if (prevSunTzu)
+    {
+        std::istringstream ssOn("name SunTzu value true");
+        setoption(ssOn);
     }
 
     elapsed = now() - elapsed + 1;  // Ensure positivity to avoid a 'divide by zero'

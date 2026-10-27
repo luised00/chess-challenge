@@ -40,6 +40,7 @@
 #include "position.h"
 #include "search.h"
 #include "shm.h"
+#include "suntzu.h"
 #include "syzygy/tbprobe.h"
 #include "types.h"
 #include "uci.h"
@@ -128,6 +129,13 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
 
     options.add("BookVariety", Option(false));
 
+    options.add("SunTzu", Option(true));
+
+    options.add("OpponentProfile",
+                Option("auto var auto var forte var medio var fraco", "auto"));
+
+    options.add("DrawAversion", Option(25, 0, 150));
+
     options.add("nodestime", Option(0, 0, 10000));
 
     options.add("UCI_Chess960", Option(false));
@@ -181,6 +189,7 @@ void Engine::stop() { threads.stop = true; }
 void Engine::search_clear() {
     wait_for_search_finished();
 
+    SunTzu::global_state().reset();
     tt.clear(threads);
     threads.clear();
 

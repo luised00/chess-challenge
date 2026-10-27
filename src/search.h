@@ -385,6 +385,7 @@ class Worker {
     TimePoint elapsed() const;
 
     Value evaluate(const Position&);
+    Value draw_score(Color stm, bool randomize = true) const;
 
     LimitsType limits;
 
