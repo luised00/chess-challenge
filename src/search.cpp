@@ -34,6 +34,7 @@
 #include <utility>
 
 #include "bitboard.h"
+#include "book.h"
 #include "evaluate.h"
 #include "history.h"
 #include "misc.h"
@@ -210,6 +211,32 @@ void Search::Worker::start_searching() {
           {0, {rootPos.checkers() ? -VALUE_MATE : VALUE_DRAW, rootPos}});
         main_manager()->updates.onBestmove(UCIEngine::move(Move::none()), "");
         return;
+    }
+
+    // Phase 3: Polyglot opening book consultation at root before starting worker threads
+    if (!main_manager()->ponder && !limits.infinite && !limits.depth && !limits.nodes
+        && !limits.mate && int(options["OwnBook"]))
+    {
+        Move bookMove = PolyglotBook::global_book().probe(rootPos, options);
+        if (bookMove != Move::none()
+            && std::find(rootMoves.begin(), rootMoves.end(), bookMove) != rootMoves.end())
+        {
+            std::string bmStr = UCIEngine::move(bookMove, rootPos.is_chess960());
+            InfoFull    info{};
+            info.depth    = 1;
+            info.selDepth = 1;
+            info.multiPV  = 1;
+            info.score    = {VALUE_ZERO, rootPos};
+            info.timeMs   = 1;
+            info.nodes    = 0;
+            info.nps      = 0;
+            info.tbHits   = 0;
+            info.pv       = bmStr;
+            info.hashfull = tt.hashfull();
+            main_manager()->updates.onUpdateFull(info);
+            main_manager()->updates.onBestmove(bmStr, "");
+            return;
+        }
     }
 
     // Main thread starts non-main threads, and begins own search

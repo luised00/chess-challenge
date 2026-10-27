@@ -414,6 +414,11 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
             return PositionSetError("Invalid FEN. Invalid en-passant square.");
     }
 
+    if (!enpassant)
+        st->polyglotEpSquare = SQ_NONE;
+    else
+        st->polyglotEpSquare = st->epSquare;
+
     if (!enpassant || !legalEP)
         st->epSquare = SQ_NONE;
 
@@ -924,6 +929,7 @@ void Position::do_move(Move                      m,
     k ^= Zobrist::psq[pc][from] ^ Zobrist::psq[pc][to];
 
     // Reset en passant square
+    st->polyglotEpSquare = SQ_NONE;
     if (st->epSquare != SQ_NONE)
     {
         k ^= Zobrist::enpassant[file_of(st->epSquare)];
@@ -948,6 +954,7 @@ void Position::do_move(Move                      m,
             // If there are no pawns attacking the ep square, ep is not possible.
             if (pawns)
             {
+                st->polyglotEpSquare = epSquare;
                 Square   ksq         = square<KING>(them);
                 Bitboard notBlockers = ~st->previous->blockersForKing[them];
                 bool     noDiscovery = (from & notBlockers) || file_of(from) == file_of(ksq);
@@ -1351,6 +1358,7 @@ void Position::do_null_move(StateInfo& newSt) {
     newSt.previous = st;
     st             = &newSt;
 
+    st->polyglotEpSquare = SQ_NONE;
     if (st->epSquare != SQ_NONE)
     {
         st->key ^= Zobrist::enpassant[file_of(st->epSquare)];

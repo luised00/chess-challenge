@@ -54,6 +54,7 @@ struct StateInfo {
     int    rule50;
     int    pliesFromNull;
     Square epSquare;
+    Square polyglotEpSquare;
 
     // Not copied when making a move (will be recomputed anyhow)
     Key        key;
@@ -106,6 +107,7 @@ class Position {
     Piece                               piece_on(Square s) const;
     const std::array<Piece, SQUARE_NB>& piece_array() const;
     Square                              ep_square() const;
+    Square                              polyglot_ep_square() const;
     bool                                empty(Square s) const;
     template<PieceType Pt>
     int count(Color c) const;
@@ -277,6 +279,8 @@ inline Square Position::square(Color c) const {
 }
 
 inline Square Position::ep_square() const { return st->epSquare; }
+
+inline Square Position::polyglot_ep_square() const { return st->polyglotEpSquare; }
 
 inline bool Position::can_castle(CastlingRights cr) const { return st->castlingRights & cr; }
 

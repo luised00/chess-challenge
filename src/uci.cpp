@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "benchmark.h"
+#include "book.h"
 #include "engine.h"
 #include "memory.h"
 #include "movegen.h"
@@ -142,7 +143,17 @@ void UCIEngine::loop() {
         else if (token == "ucinewgame")
             engine.search_clear();
         else if (token == "isready")
+        {
+            if (int(engine.get_options()["OwnBook"]))
+                PolyglotBook::global_book().ensure_loaded(
+                  std::string(engine.get_options()["BookFile"]));
             sync_cout << "readyok" << sync_endl;
+        }
+        else if (token == "bookkey")
+        {
+            sync_cout << std::hex << std::nouppercase << std::setfill('0') << std::setw(16)
+                      << engine.polyglot_key() << std::dec << std::setfill(' ') << sync_endl;
+        }
 
         // Add custom non-UCI commands, mainly for debugging purposes.
         else if (token == "flip")

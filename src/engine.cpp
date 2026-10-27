@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include "book.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "nnue/network.h"
@@ -113,6 +114,19 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
     options.add("PanicReserve", Option(120, 0, 600));
 
     options.add("TimeProfile", Option("normal var normal var rapido", "normal"));
+
+    options.add("OwnBook", Option(false));
+
+    options.add("BookFile", Option("books/suntzu_310.bin", [](const Option& o) {
+                    std::string f = std::string(o);
+                    if (!f.empty() && f != "<empty>")
+                        PolyglotBook::global_book().ensure_loaded(f);
+                    return std::nullopt;
+                }));
+
+    options.add("BookDepth", Option(16, 1, 100));
+
+    options.add("BookVariety", Option(false));
 
     options.add("nodestime", Option(0, 0, 10000));
 
@@ -341,6 +355,8 @@ const OptionsMap& Engine::get_options() const { return options; }
 OptionsMap&       Engine::get_options() { return options; }
 
 std::string Engine::fen() const { return pos.fen(); }
+
+Key Engine::polyglot_key() const { return PolyglotBook::compute_key(pos); }
 
 std::optional<PositionSetError> Engine::flip() { return pos.flip(); }
 
