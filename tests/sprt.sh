@@ -14,7 +14,7 @@ mkdir -p tests/results
 
 # shellcheck disable=SC2086
 ./fastchess/fastchess \
-  -engine cmd="$DEV_ENGINE" name=dev $EXTRA_DEV_OPTS \
+  -engine cmd="$DEV_ENGINE" name=dev option.PhysicalBoardOverhead=0 option.PanicReserve=0 $EXTRA_DEV_OPTS \
   -engine cmd="$BASE_ENGINE" name=base \
   -each tc="$TC" option.Hash=16 option.Threads=1 \
   -openings file=books/UHO.epd format=epd order=random \

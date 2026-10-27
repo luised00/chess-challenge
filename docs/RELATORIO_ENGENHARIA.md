@@ -26,9 +26,12 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
 
 ### 2.2 Fase 2 — Gestão de Tempo Físico e Ponder
 - **Problema:** Descontar de 5 a 8 s por lance de operação humana no tabuleiro físico sem estourar os 25 min *sudden death*.
-- **Solução:** Modelo `PhysicalBoardOverhead` + `PanicReserve` + extensão de lances forçados.
-- **Arquivos:** `src/timeman.cpp`, `src/timeman.h`, `src/search.cpp`, `tests/lag_proxy.py`.
-- **Resultados:** *(preencher na Fase 2)*
+- **Solução:** Modelo `PhysicalBoardOverhead` (padrão 7000 ms) + `PanicReserve` (padrão 120 s) + `TimeProfile` (`normal`/`rapido`) + horizonte dinâmico por material e número do lance + corte de tempo em lances forçados/dominantes.
+- **Arquivos:** `src/timeman.cpp`, `src/timeman.h`, `src/engine.cpp`, `src/search.cpp`, `tests/lag_proxy.py`, `tests/test_timeman_ponder.py`.
+- **Resultados:**
+  - **Teste escalado com atraso físico (`lag_proxy.py`, `tc=15+0`, `H=70 ms`, `R=12 s`, 40 partidas):** **0 derrotas por tempo** (contra 5 quedas de seta antes da calibração dos tetos de pânico em múltiplos de $H$).
+  - **Teste de força sem atraso (`suntzu-native` vs `sf-base`, 60 partidas `2+0.02`):** Elo `-29.02 +/- 49.04` (dentro da margem estatística de 0 Elo, `LLR: -0.14` em `[-2.94, 2.94]`), 0 crashes.
+  - **Testes de resposta rápida e Ponder (`tests/test_timeman_ponder.py`):** `go ponder` → `ponderhit` e `stop` validados; lance legal único respondido em `51.0 ms`; reserva de pânico crítico (< 60 s) respondendo em `1.3 ms`.
 
 ### 2.3 Fase 3 — Livro Polyglot com Pesos 3-1-0
 - **Problema:** Responder instantaneamente na abertura escolhendo linhas que maximizam $3V + E$.
@@ -55,4 +58,4 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
 
 ## 3. Experimentos Rejeitados
 
-*(Nesta seção serão registrados os ajustes ou heurísticas testados durante a semana que não demonstraram ganho estatístico em SPRT / pontos 3-1-0 e por isso foram descartados ou mantidos desligados por padrão.)*
+- **Horizonte dinâmico agressivo ($N \in [12, 42]$) sem piso de múltiplos de $H$ (Fase 2):** Na primeira calibração do `timeman.cpp`, estimar $N$ abaixo de 20 lances no final da partida fazia o motor consumir a reserva e sofrer *time forfeit* quando partidas empatadas se estendiam além do lance 80 com atraso fixo $H$ por lance. Foi substituído por um piso conservador ($N \in [28, 52]$) combinado com gatilhos de pânico em $36H$, $22H$ e $15H$, reduzindo as quedas de seta de 5/30 para **0/40**.

@@ -8,7 +8,7 @@ Este documento mapeia cada princípio estratégico de *A Arte da Guerra* (Sun Tz
 
 | Princípio Sun Tzu | Algoritmo / Componente | Arquivos | Opções UCI | Resultado Medido |
 | --- | --- | --- | --- | --- |
-| *"A velocidade é a essência da guerra"* | Gestão de tempo para tabuleiro físico, reserva de pânico e ponder | `src/timeman.cpp`, `src/search.cpp` | `PhysicalBoardOverhead`, `PanicReserve`, `TimeProfile` | *(Fase 2)* |
+| *"A velocidade é a essência da guerra"* | Gestão de tempo para tabuleiro físico, reserva de pânico e ponder | `src/timeman.cpp`, `src/search.cpp` | `PhysicalBoardOverhead`, `PanicReserve`, `TimeProfile` | **0 quedas de seta** (40/40 partidas com overhead simulado); lance único em 51 ms; pânico (<60s) em 1.3 ms; Elo neutro sem atraso |
 | *"Escolha o terreno"* | Livro Polyglot `.bin` nativo com pesos 3-1-0 ($3V + E$) | `src/book.cpp`, `src/book.h`, `tools/book_builder.py` | `OwnBook`, `BookFile`, `BookDepth`, `BookVariety` | *(Fase 3)* |
 | *"Conhece o teu inimigo e conhece-te a ti mesmo"* | Modelo online do oponente por perda média de centipeões (EMA) | `src/suntzu.cpp`, `src/suntzu.h` | `SunTzu`, `OpponentProfile` | *(Fase 4)* |
 | *"Na guerra, o objetivo é a vitória, não a campanha prolongada"* | Aversão dinâmica ao empate calibrada para pontuação 3-1-0 | `src/search.cpp`, `src/suntzu.cpp` | `DrawAversion` | *(Fase 4)* |
