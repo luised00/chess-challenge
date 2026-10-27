@@ -98,30 +98,56 @@ def translate_pt_san_to_en(text: str) -> str:
     return s
 
 
+CASTLE_KINGSIDE_RE = re.compile(r"(o-?o|0-?0|roque\s+(menor|pequeno|curto))")
+CASTLE_QUEENSIDE_RE = re.compile(r"(o-?o-?o|0-?0-?0|roque\s+(maior|grande|longo))")
+
+
+def _castling_move(board: chess.Board, kingside: Optional[bool]) -> Optional[chess.Move]:
+    """Devolve o roque legal pedido (kingside=None: o único roque legal, se houver só um)."""
+    castles = [m for m in board.legal_moves if board.is_castling(m)]
+    if kingside is not None:
+        castles = [m for m in castles if board.is_kingside_castling(m) == kingside]
+    return castles[0] if len(castles) == 1 else None
+
+
 def parse_user_move(board: chess.Board, raw_input: str) -> chess.Move:
     """
     Interpreta um lance digitado pelo operador em UCI (e2e4, e7e8q), SAN Inglês (Nf3, exd5)
     ou SAN Português (Cf3, Cxf7, Td1, Dd4, Rf1, e8=D).
+    Roque aceita O-O, 0-0, OO, 00, travessões (O–O), 'roque menor/maior', rei duas casas (Rg1, Kg1, e1g1)
+    e rei sobre a torre (e1h1); o lance devolvido é sempre a forma UCI padrão (e1g1/e1c1).
     Lança ValueError se o lance for inválido, ilegal ou ambíguo.
     """
     s = raw_input.strip()
     if not s:
         raise ValueError("Lance vazio.")
 
-    # 1. Tenta UCI direto (ex: e2e4, e7e8q)
+    # 0. Roque em qualquer grafia comum
+    s = re.sub(r"[\u2010-\u2015\u2212]", "-", s)
+    castle_key = re.sub(r"[+#!?\s]+$", "", s.lower()).strip()
+    is_castle_text = castle_key == "roque" or CASTLE_KINGSIDE_RE.fullmatch(castle_key) or CASTLE_QUEENSIDE_RE.fullmatch(castle_key)
+    if is_castle_text:
+        kingside = None if castle_key == "roque" else not bool(CASTLE_QUEENSIDE_RE.fullmatch(castle_key))
+        move = _castling_move(board, kingside)
+        if move is not None:
+            return move
+        if kingside is None and any(board.is_castling(m) for m in board.legal_moves):
+            raise ValueError("Roque ambíguo: digite O-O (menor) ou O-O-O (maior).")
+        lado = "" if kingside is None else (" menor (O-O)" if kingside else " maior (O-O-O)")
+        raise ValueError(f"Roque{lado} é ilegal na posição atual.")
+
+    # 1. Tenta UCI direto (ex: e2e4, e7e8q; e1h1 é normalizado para e1g1)
     if re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbnQRBN]?", s):
         try:
-            move = chess.Move.from_uci(s.lower())
-            if move in board.legal_moves:
-                return move
-            # Verifica se é promoção sem letra (ex: peão chegando na 8ª/1ª fila)
-            for promo in (chess.QUEEN,):
-                pm = chess.Move(move.from_square, move.to_square, promotion=promo)
-                if pm in board.legal_moves:
-                    return pm
-            raise ValueError(f"Lance UCI '{s}' é ilegal na posição atual.")
-        except ValueError as e:
-            raise ValueError(str(e)) from e
+            return board.parse_uci(s.lower())
+        except (chess.IllegalMoveError, chess.InvalidMoveError):
+            pass
+        # Verifica se é promoção sem letra (ex: peão chegando na 8ª/1ª fila)
+        try:
+            return board.parse_uci(s.lower() + "q")
+        except (chess.IllegalMoveError, chess.InvalidMoveError):
+            pass
+        raise ValueError(f"Lance UCI '{s}' é ilegal na posição atual.")
 
     # 2. Tenta SAN em Português traduzido para Inglês (ex: Cf3 -> Nf3, Td1 -> Rd1, e8=D -> e8=Q)
     candidates_san = []
@@ -136,6 +162,13 @@ def parse_user_move(board: chess.Board, raw_input: str) -> chess.Move:
             if move in board.legal_moves:
                 return move
         except chess.IllegalMoveError as e:
+            # Rei duas casas digitado como lance de rei (Rg1 / Kg1 / Rc8 ...) = roque
+            m_king = re.fullmatch(r"Kx?([a-h][1-8])[+#]?", san_cand)
+            if m_king:
+                target = chess.parse_square(m_king.group(1))
+                for mv in board.legal_moves:
+                    if board.is_castling(mv) and mv.to_square == target:
+                        return mv
             raise ValueError(f"Lance '{s}' é ilegal na posição atual.") from e
         except chess.AmbiguousMoveError as e:
             raise ValueError(f"Lance '{s}' é ambíguo (especifique a coluna ou linha de origem).") from e

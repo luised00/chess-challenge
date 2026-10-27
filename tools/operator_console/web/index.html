@@ -468,7 +468,7 @@ function toast(msg, level) {
 function alertChips(container, alerts) {
   container.replaceChildren();
   for (const a of alerts || []) {
-    const red = /CAPTURA|XEQUE|PROMOVE|EN PASSANT/.test(a);
+    const red = /CAPTURA|XEQUE|PROMOVE|EN PASSANT|ROCOU/.test(a);
     container.appendChild(el("div", "alert" + (red ? " red" : ""), a));
   }
 }

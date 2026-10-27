@@ -93,6 +93,26 @@ def test_move_parser_and_banners():
     info_c = describe_move_pt(b_castle, mc)
     assert info_c["is_castling"] is True
     assert any("ROQUE" in a for a in info_c["alerts"])  # type: ignore
+    # Roque em todas as grafias usadas na mesa (posição real em que 'O-O' do adversário não entrou)
+    b_castle = chess.Board("rnb1kb1r/5p1p/p2pp1p1/1pq5/4P1Q1/1BN5/PPP2PPP/3RK2R w Kkq - 2 12")
+    for txt in ("O-O", "0-0", "o-o", "OO", "00", "O\u2013O", "0\u20140", "O-O+", "roque", "roque menor", "e1g1", "e1h1", "Rg1", "Kg1"):
+        assert parse_user_move(b_castle, txt).uci() == "e1g1", txt
+    assert parse_user_move(b_castle, "Rf1").uci() == "e1f1"
+    assert parse_user_move(b_castle, "Tf1").uci() == "h1f1"
+    for txt in ("O-O-O", "roque maior"):
+        try:
+            parse_user_move(b_castle, txt)
+            raise AssertionError(f"{txt} deveria ser rejeitado")
+        except ValueError:
+            pass
+    b_both = chess.Board("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1")
+    for txt in ("O-O-O", "0-0-0", "OOO", "Rc8", "e8a8"):
+        assert parse_user_move(b_both, txt).uci() == "e8c8", txt
+    try:
+        parse_user_move(b_both, "roque")
+        raise AssertionError("'roque' com os dois lados legais deveria ser ambíguo")
+    except ValueError as err:
+        assert "ambíguo" in str(err)
     print("  -> Parser PT/EN/UCI, rejeição de ilegais e alertas de Promoção/En Passant/Roque: OK")
 
 
@@ -507,6 +527,19 @@ def test_web_console_end_to_end(engine_path: str):
 
         st = call("/api/state")
         assert st["our_color"] == "black" and not st["is_our_turn"] and len(st["legal"]) == 20
+        assert call("/api/parse", {"move": "OO"})["ok"] is False  # roque ilegal na posição inicial
+        castle_session = GameSession(engine=engine, our_color=chess.BLACK, save_dir=tmpdir,
+                                     start_fen="rnb1kb1r/5p1p/p2pp1p1/1pq5/4P1Q1/1BN5/PPP2PPP/3RK2R w Kkq - 2 12")
+        main_session, controller.session = controller.session, castle_session
+        with controller.lock:
+            controller._refresh_board_cache()
+        st_c = call("/api/state")
+        assert {"uci": "e1g1", "from": "e1", "to": "h1", "promo": None} in st_c["legal"]  # rei sobre a torre = roque
+        warn = call("/api/parse", {"move": "Tf1"})
+        assert warn["ok"] and "ROCOU" in warn["move"]["alerts"][0]
+        controller.session = main_session
+        with controller.lock:
+            controller._refresh_board_cache()
 
         res = call("/api/move", {"move": "e2e5"})
         assert not res["ok"] and "[LANCE REJEITADO]" in res["message"]

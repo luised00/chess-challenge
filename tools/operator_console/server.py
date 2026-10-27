@@ -121,6 +121,10 @@ class ConsoleController:
                     "promo": chess.piece_symbol(mv.promotion) if mv.promotion else None,
                 }
             )
+            if board.is_castling(mv):
+                # Permite arrastar o rei sobre a própria torre (como no chess.com / lichess)
+                rook_sq = chess.square(7 if board.is_kingside_castling(mv) else 0, chess.square_rank(mv.from_square))
+                legal.append({"uci": mv.uci(), "from": chess.square_name(mv.from_square), "to": chess.square_name(rook_sq), "promo": None})
 
         history = []
         replay = chess.Board(self.session.start_fen)
@@ -325,6 +329,16 @@ class ConsoleController:
                 return {"ok": False, "level": "error", "message": str(err)}
             info = describe_move_pt(board, mv)
             info["san_pt"] = san_to_pt(str(info["san"]))
+            # Torre saindo do canto enquanto o roque daquele lado é legal: provável roque registrado errado
+            piece = board.piece_at(mv.from_square)
+            if piece is not None and piece.piece_type == chess.ROOK:
+                for castle in board.legal_moves:
+                    if board.is_castling(castle) and chess.square_file(mv.from_square) == (7 if board.is_kingside_castling(castle) else 0):
+                        info["alerts"] = [
+                            f"SE O ADVERSÁRIO ROCOU, cancele e registre {'O-O' if board.is_kingside_castling(castle) else 'O-O-O'} "
+                            "(ou mova o REI até a torre)!"
+                        ] + list(info["alerts"])  # type: ignore[arg-type]
+                        break
             return {"ok": True, "level": "info", "message": "", "move": info}
 
     def opp_move(self, text: str) -> dict[str, object]:
