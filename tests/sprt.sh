@@ -9,6 +9,8 @@ EXTRA_DEV_OPTS="${4:-}"
 ROUNDS="${5:-2000}"
 CONCURRENCY="${CONCURRENCY:-4}"
 TC="${TC:-10+0.1}"
+# Limites do SPRT: "0 5" (ganho) ou "-5 0" (não regressão)
+read -r ELO0 ELO1 <<< "${SPRT_BOUNDS:-0 5}"
 
 mkdir -p tests/results
 
@@ -19,7 +21,7 @@ mkdir -p tests/results
   -each tc="$TC" option.Hash=16 option.Threads=1 \
   -openings file=books/UHO.epd format=epd order=random \
   -rounds "$ROUNDS" -repeat -concurrency "$CONCURRENCY" \
-  -sprt elo0=0 elo1=5 alpha=0.05 beta=0.05 \
+  -sprt elo0="$ELO0" elo1="$ELO1" alpha=0.05 beta=0.05 \
   -pgnout file="tests/results/${TEST_NAME}.pgn"
 
 python3 tests/score_310.py "tests/results/${TEST_NAME}.pgn" dev

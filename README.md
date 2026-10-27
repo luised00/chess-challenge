@@ -73,6 +73,10 @@ O console web abre em `http://127.0.0.1:8765/` (`--port` para mudar, `--no-brows
 # Rodar match SPRT contra a base e calcular pontuação 3-1-0
 ./tests/sprt.sh bin/suntzu-native bin/sf-base teste_base
 
+# Benchmark completo: não regressão (SPRT [-5,0]), escada 3-1-0 SunTzu on/off e torneio escalado
+./tests/benchmark.sh quick   # ~2h
+./tests/benchmark.sh full    # noite inteira ou mais; resumo em tests/results/bench_<data>/summary.md
+
 # Suítes automatizadas de engenharia (Fases 2 a 6)
 python3 tests/test_timeman_ponder.py
 python3 tests/book_keys_test.py
