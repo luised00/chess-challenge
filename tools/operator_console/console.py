@@ -31,6 +31,8 @@ import time
 from typing import Optional
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 VENV_SITE = os.path.join(ROOT_DIR, ".venv", "lib")
 if os.path.isdir(VENV_SITE):
     for d in os.listdir(VENV_SITE):
@@ -934,13 +936,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=os.path.join(ROOT_DIR, "partidas"),
         help="Diretório de autosave para FEN e PGN (padrão: partidas/)",
     )
+    p.add_argument(
+        "--simple",
+        action="store_true",
+        help="Usa modo texto simples (ASCII sem cores) em vez do painel TUI completo",
+    )
     return p
 
 
 def run_interactive_console(args: argparse.Namespace) -> int:
+    from tools.operator_console.tui import (
+        ALERT_BG,
+        BOLD,
+        BRIGHT_GOLD,
+        CYAN,
+        GOLD,
+        JADE,
+        RESET,
+        render_dashboard,
+    )
+
     threads = max(1, args.threads // 2) if args.eco else args.threads
     hash_mb = min(256, args.hash) if args.eco else args.hash
     enable_ponder = False if (args.eco or args.no_ponder) else True
+    is_tty = sys.stdout.isatty() and not args.simple
 
     book_path = os.path.join(ROOT_DIR, "books", "suntzu_310.bin")
     syzygy_dir = os.path.join(ROOT_DIR, "syzygy")
@@ -963,15 +982,9 @@ def run_interactive_console(args: argparse.Namespace) -> int:
     our_color = chess.WHITE if args.color in ("white", "brancas") else chess.BLACK
     initial_ms = int(round(args.time_min * 60 * 1000))
 
-    print("=" * 68)
-    print("  CONSOLE DO OPERADOR SUNTZU — CHESS CHALLENGE III ICEV 2026")
-    print("=" * 68)
-    print(
-        f"  Motor: {args.engine} | Threads={threads} | Hash={hash_mb}MB | Ponder={'ON' if enable_ponder else 'OFF'}"
-    )
-
     engine = WatchdogEngine(args.engine, options=options, watchdog_timeout=3.0)
 
+    status_flash = ""
     if args.resume:
         session = GameSession.resume_from_file(
             args.resume,
@@ -981,8 +994,8 @@ def run_interactive_console(args: argparse.Namespace) -> int:
             save_dir=args.save_dir,
             enable_ponder=enable_ponder,
         )
-        print(
-            f"  [RETOMADA OK] Posição restaurada de '{args.resume}' ({len(session.moves_uci)} meios-lances)."
+        status_flash = (
+            f"[RETOMADA OK] Posição restaurada de '{args.resume}' ({len(session.moves_uci)} meios-lances)."
         )
     else:
         session = GameSession(
@@ -993,103 +1006,216 @@ def run_interactive_console(args: argparse.Namespace) -> int:
             enable_ponder=enable_ponder,
         )
 
-    print("  Comandos: <lance> (ex: e2e4, e4, Cf3, Cxf7) | u (desfazer) | t mm:ss (relógio)")
-    print("            perfil auto|forte|medio|fraco | fen | quit")
-    print("=" * 68)
+    last_our_move_info: Optional[dict[str, object]] = None
+    last_origin_tag = ""
+    last_used_ponderhit = False
+    last_from_book = False
 
     try:
         while True:
-            last_mv = chess.Move.from_uci(session.moves_uci[-1]) if session.moves_uci else None
-            print("\n" + format_ascii_board(session.board, last_move=last_mv))
-            print(
-                f"  [RELÓGIOS] Nosso: {format_clock_ms(session.our_time_ms)} | "
-                f"Adversário (est.): {format_clock_ms(session.opp_time_ms)} | "
-                f"Ponder: {'ATIVO (' + str(engine.ponder_move_uci) + ')' if engine.pondering else 'inativo'}"
-            )
-            print(f"  [DOUTRINA] {engine.last_suntzu_info}")
-
-            for r_alert in check_rule_alerts(
+            r_alerts = check_rule_alerts(
                 session.board, engine.last_eval_cp, is_our_turn=(session.board.turn == session.our_color)
-            ):
-                print(f"  *** {r_alert} ***")
+            )
+
+            # Se é a nossa vez e o jogo ainda não acabou, o motor calcula e joga imediatamente
+            if session.board.turn == session.our_color and not session.board.is_game_over(claim_draw=True):
+                if is_tty:
+                    print(
+                        render_dashboard(
+                            board=session.board,
+                            our_color=session.our_color,
+                            our_time_ms=session.our_time_ms,
+                            opp_time_ms=session.opp_time_ms,
+                            suntzu_info=engine.last_suntzu_info,
+                            last_eval_cp=engine.last_eval_cp,
+                            last_our_move_info=last_our_move_info,
+                            last_origin_tag=last_origin_tag,
+                            ponder_move_uci=engine.ponder_move_uci if engine.pondering else None,
+                            used_ponderhit=last_used_ponderhit,
+                            from_book=last_from_book,
+                            rule_alerts=r_alerts,
+                            status_flash="General Sun Tzu meditando sobre o próximo golpe...",
+                            clear_screen=True,
+                        )
+                    )
+                else:
+                    print("\n  [MOTOR PENSANDO...]")
+
+                mv, info, hit, elapsed_ms = session.play_our_move()
+                last_our_move_info = info
+                last_used_ponderhit = hit
+                last_from_book = elapsed_ms < 15 and len(session.moves_uci) <= 16 and not hit
+                if hit:
+                    last_origin_tag = f"PONDERHIT ({elapsed_ms} ms)"
+                elif last_from_book:
+                    last_origin_tag = f"LIVRO 3-1-0 ({elapsed_ms} ms)"
+                else:
+                    last_origin_tag = f"BUSCA ({elapsed_ms} ms)"
+
+                if not is_tty:
+                    print(format_our_move_banner(info))
+                continue
+
+            # Renderiza o Dashboard TUI (ou ASCII simples se --simple)
+            if not args.simple:
+                print(
+                    render_dashboard(
+                        board=session.board,
+                        our_color=session.our_color,
+                        our_time_ms=session.our_time_ms,
+                        opp_time_ms=session.opp_time_ms,
+                        suntzu_info=engine.last_suntzu_info,
+                        last_eval_cp=engine.last_eval_cp,
+                        last_our_move_info=last_our_move_info,
+                        last_origin_tag=last_origin_tag,
+                        ponder_move_uci=engine.ponder_move_uci if engine.pondering else None,
+                        used_ponderhit=last_used_ponderhit,
+                        from_book=last_from_book,
+                        rule_alerts=r_alerts,
+                        status_flash=status_flash,
+                        clear_screen=is_tty,
+                    )
+                )
+            else:
+                last_mv = chess.Move.from_uci(session.moves_uci[-1]) if session.moves_uci else None
+                print("\n" + format_ascii_board(session.board, last_move=last_mv))
+                if last_our_move_info:
+                    print(format_our_move_banner(last_our_move_info))
+                if status_flash:
+                    print(f"  {status_flash}")
+
+            status_flash = ""
 
             if session.board.is_game_over(claim_draw=True):
                 res = session.board.result(claim_draw=True)
-                print("\n" + "#" * 68)
-                print(f"  FIM DE PARTIDA! Resultado: {res}")
-                print("#" * 68)
+                print(f"\n  {GOLD}{BOLD}═══ FIM DE PARTIDA! Resultado: {res} ═══{RESET}")
                 cmd_end = input("  Digite 'u' para desfazer último lance ou Enter/quit para sair: ").strip()
                 if cmd_end.lower() == "u":
                     undone = session.undo_last()
-                    print(f"  [DESFEITO] {undone} meio(s)-lance(s) revertido(s).")
+                    last_our_move_info = None
+                    status_flash = f"[DESFEITO] {undone} meio(s)-lance(s) revertido(s)."
+                    print(f"  {status_flash}")
                     continue
                 break
 
-            # Se é a nossa vez, o motor pensa e joga
-            if session.board.turn == session.our_color:
-                print("\n  [MOTOR PENSANDO...]")
-                mv, info, hit, elapsed_ms = session.play_our_move()
-                print(format_our_move_banner(info))
-                print(
-                    f"  (Tempo de busca: {elapsed_ms} ms | Ponderhit: {'SIM' if hit else 'NÃO'} | "
-                    f"Autosave: {args.save_dir}/ultima.fen)"
-                )
-                continue
-
             # Vez do adversário: aguarda comando do Operador B
-            raw = input("\n  Lance do adversário (ou comando 'u', 't mm:ss', 'quit'): ").strip()
+            prompt_str = (
+                f"\n  {GOLD}{BOLD}⚔ Comando / Lance do adversário{RESET} "
+                f"{CYAN}(ex: e4, Cf6, Cxf7, 0-0, u, t 18:30){RESET}: "
+            )
+            raw = input(prompt_str).strip()
             if not raw:
                 continue
 
             low = raw.lower()
-            if low in ("quit", "exit", "q"):
+            if low in ("quit", "exit", "q", "sair"):
                 break
+
+            if low in ("ajuda", "help", "?"):
+                status_flash = (
+                    "Comandos: lance (e4, Cf6, Cxf7, 0-0, e8=D) | u=desfazer | t mm:ss=nosso relógio | "
+                    "t opp mm:ss=relógio oponente | perfil fraco|medio|forte|auto | rapido|normal | fen | quit"
+                )
+                print(f"  {status_flash}")
+                continue
 
             if low == "u":
                 undone = session.undo_last()
-                print(f"  [DESFEITO] {undone} meio(s)-lance(s) revertido(s).")
+                last_our_move_info = None
+                status_flash = f"[DESFEITO] {undone} meio(s)-lance(s) revertido(s)."
+                print(f"  {status_flash}")
                 continue
 
             if low == "fen":
-                print(f"  FEN atual: {session.board.fen()}")
+                status_flash = f"FEN atual: {session.board.fen()}"
+                print(f"  {status_flash}")
+                continue
+
+            if low in ("rapido", "normal"):
+                engine.set_option("TimeProfile", low)
+                if low == "rapido":
+                    engine.set_option("PhysicalBoardOverhead", "10000")
+                    engine.set_option("PanicReserve", "180")
+                else:
+                    engine.set_option("PhysicalBoardOverhead", str(args.overhead_ms))
+                    engine.set_option("PanicReserve", str(args.panic_sec))
+                status_flash = f"[MODO DE TEMPO] TimeProfile ajustado para '{low.upper()}'."
+                print(f"  {status_flash}")
+                continue
+
+            if low.startswith("t opp "):
+                try:
+                    ms = parse_clock_to_ms(raw[6:].strip())
+                    session.opp_time_ms = ms
+                    session.autosave()
+                    status_flash = f"[RELÓGIO SINCRONIZADO] Tempo do adversário ajustado para {format_clock_ms(ms)}."
+                    print(f"  {status_flash}")
+                except ValueError as err:
+                    status_flash = f"[ERRO DE RELÓGIO] {err}"
+                    print(f"  {status_flash}")
                 continue
 
             if low.startswith("t "):
                 try:
                     ms = session.sync_our_clock(raw[2:].strip())
-                    print(f"  [RELÓGIO SINCRONIZADO] Nosso tempo ajustado para {format_clock_ms(ms)}.")
+                    status_flash = f"[RELÓGIO SINCRONIZADO] Nosso tempo ajustado para {format_clock_ms(ms)}."
+                    print(f"  {status_flash}")
                 except ValueError as err:
-                    print(f"  [ERRO DE RELÓGIO] {err}")
+                    status_flash = f"[ERRO DE RELÓGIO] {err}"
+                    print(f"  {status_flash}")
                 continue
 
             if low.startswith("perfil "):
                 prof = low.split(maxsplit=1)[1]
                 if prof in ("auto", "forte", "medio", "fraco"):
                     engine.set_option("OpponentProfile", prof)
-                    print(f"  [PERFIL ATUALIZADO] OpponentProfile = {prof}")
+                    status_flash = f"[PERFIL ATUALIZADO] OpponentProfile = {prof}"
+                    print(f"  {status_flash}")
                 else:
-                    print("  [ERRO] Use: perfil auto | forte | medio | fraco")
+                    status_flash = "[ERRO] Use: perfil auto | forte | medio | fraco"
+                    print(f"  {status_flash}")
                 continue
 
             # Interpreta e valida o lance do adversário
             try:
                 opp_move = parse_user_move(session.board, raw)
             except ValueError as err:
-                print(f"  [LANCE REJEITADO] {err}")
+                status_flash = f"[LANCE REJEITADO] {err}"
+                print(f"  {ALERT_BG} {status_flash} {RESET}")
                 continue
 
             opp_info = describe_move_pt(session.board, opp_move)
             if not args.no_confirm:
-                board_preview = session.board.copy()
-                board_preview.push(opp_move)
-                print("\n  --- CONFIRMAÇÃO VISUAL DO LANCE ADVERSÁRIO ---")
-                print(format_ascii_board(board_preview, last_move=opp_move))
-                print(f"  Lance interpretado: {opp_info['uci']} ({opp_info['san']}) — {opp_info['spoken']}")
-                for al in opp_info["alerts"]:  # type: ignore
-                    print(f"  * {al}")
-                ans = input("  Confirmar lance? [Enter = SIM / 'n' = cancelar]: ").strip().lower()
+                if is_tty:
+                    print(
+                        render_dashboard(
+                            board=session.board,
+                            our_color=session.our_color,
+                            our_time_ms=session.our_time_ms,
+                            opp_time_ms=session.opp_time_ms,
+                            suntzu_info=engine.last_suntzu_info,
+                            last_eval_cp=engine.last_eval_cp,
+                            last_our_move_info=last_our_move_info,
+                            last_origin_tag=last_origin_tag,
+                            ponder_move_uci=engine.ponder_move_uci if engine.pondering else None,
+                            used_ponderhit=last_used_ponderhit,
+                            from_book=last_from_book,
+                            rule_alerts=r_alerts,
+                            pending_opp_move=opp_move,
+                            pending_opp_info=opp_info,
+                            clear_screen=True,
+                        )
+                    )
+                else:
+                    print(f"  CONFIRMAR LANCE DO ADVERSÁRIO: {opp_info['uci']} ({opp_info['san']}) — {opp_info['spoken']}")
+
+                ans = input(
+                    f"  {BRIGHT_GOLD}{BOLD}? Confirmar lance '{opp_info['san']}' ({opp_info['spoken']})? "
+                    f"[Enter = SIM / 'n' = cancelar]: {RESET}"
+                ).strip().lower()
                 if ans not in ("", "s", "sim", "y", "yes"):
-                    print("  [CANCELADO] Digite o lance novamente.")
+                    status_flash = "[CANCELADO] Digite o lance novamente."
+                    print(f"  {status_flash}")
                     continue
 
             session.apply_opponent_move(opp_move)
