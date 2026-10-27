@@ -6,7 +6,7 @@
 2. **Livro de Aberturas Polyglot 3-1-0 (`src/book.cpp`, `tools/book_builder.py`)**: leitor nativo Polyglot `.bin` com pesos calibrados para o sistema de pontuação **3-1-0** ($peso = 3V + E$), priorizando posições desequilibradas e evitando linhas de empate.
 3. **Modelo do Oponente e Aversão Dinâmica ao Empate (`src/suntzu.cpp`, `src/search.cpp`)**: estima em tempo real a força do adversário pela perda média de centipeões (forte/médio/fraco) e ajusta dinamicamente o valor do empate conforme a regra 3-1-0 ($3 \cdot P(V) + P(E) > 1$).
 4. **Modos Táticos — Pressão, Virada e Conversão (`src/suntzu.cpp`)**: seleção final no nó raiz para induzir erros contra oponentes mais fracos, manter complicações quando em desvantagem (*swindle*) e simplificar com segurança quando ganho (+ tablebases Syzygy).
-5. **Console do Operador Anti-Crash (`tools/operator_console/`)**: interface de operação em trio com validação de lances, confirmação visual, sincronização com relógio físico, autosave FEN/PGN a cada lance e recuperação instantânea (`--resume`).
+5. **Console do Operador Anti-Crash (`tools/operator_console/`)**: console web local (abre no navegador, 100% offline) para a operação em trio com validação de lances, entrada por clique/arraste ou digitação, confirmação visual, sincronização com relógio físico, autosave FEN/PGN a cada lance e recuperação instantânea (`--resume`).
 
 ---
 
@@ -58,7 +58,12 @@ python3 tools/operator_console/console.py --color brancas
 
 # Retomada instantânea (< 1s) do estado salvo a cada lance
 python3 tools/operator_console/console.py --resume partidas/ultima.fen
+
+# Fallback de emergência sem navegador (modo texto no terminal)
+python3 tools/operator_console/console.py --color brancas --text
 ```
+
+O console web abre em `http://127.0.0.1:8765/` (`--port` para mudar, `--no-browser` para não abrir o navegador).
 
 ---
 

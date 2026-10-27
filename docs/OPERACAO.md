@@ -8,12 +8,12 @@
    - Confere se o lance executado por **C** no tabuleiro físico corresponde ao anunciado.
 
 2. **Operador B (Digitador / Console):**
-   - Digita o lance no console (`tools/operator_console/`), confere o diagrama ASCII na tela e pressiona `Enter` para confirmar.
+   - Digita o lance no console web (`tools/operator_console/`, abre sozinho no navegador) **ou** clica/arrasta a peça no tabuleiro da tela, confere a seta laranja e o quadro "Confirmar lance do adversário?" e pressiona `Enter` para confirmar.
    - Monitora o `info string` do módulo **SunTzu** (perfil detectado do oponente e modo ativo) e os alertas de repetição tripla / regra dos 50 lances.
-   - Sincroniza o tempo do console a cada 10 lances com o comando `t mm:ss`.
+   - Sincroniza o tempo do console a cada 10 lances clicando no relógio da tela e digitando `mm:ss`.
 
 3. **Operador C (Executor):**
-   - Lê em voz alta o lance retornado pelo motor na tela (atenção especial a avisos de **CAPTURA**, **ROQUE**, **EN PASSANT** e **PROMOÇÃO**).
+   - Lê em voz alta o lance retornado pelo motor no quadro verde "Execute no tabuleiro" (com bipe quando fica pronto) (atenção especial a avisos de **CAPTURA**, **ROQUE**, **EN PASSANT** e **PROMOÇÃO**).
    - Executa o lance no tabuleiro físico e aciona imediatamente o relógio físico.
    - A cada 10 lances, informa a leitura exata do nosso relógio físico para **B**.
 
@@ -25,8 +25,10 @@
 
 ### Inicialização da Partida
 
+O console abre automaticamente no navegador em `http://127.0.0.1:8765/` (somente local, 100% offline).
+
 ```bash
-# Jogando de Brancas (padrão 25 min sudden death, 4 threads, 512 MB Hash, Ponder ligado)
+# Jogando de Brancas (padrão 25 min sudden death, Ponder ligado)
 python3 tools/operator_console/console.py --color brancas
 
 # Jogando de Pretas
@@ -35,22 +37,31 @@ python3 tools/operator_console/console.py --color pretas
 # Retomada de emergência em menos de 1 segundo após queda de energia/fechamento
 python3 tools/operator_console/console.py --resume partidas/ultima.fen
 
-# Modo econômico de bateria (para uso fora da tomada: 2 threads, 128 MB Hash, sem Ponder)
+# Modo econômico de bateria (metade das threads, Hash <= 256 MB, sem Ponder)
 python3 tools/operator_console/console.py --color brancas --eco
+
+# Fallback de emergência sem navegador: modo texto no terminal (mesmos comandos antigos: u, t mm:ss, fen...)
+python3 tools/operator_console/console.py --color brancas --text
 ```
 
-### Comandos Rápidos Durante a Partida
+Se o navegador for fechado ou recarregado (`F5`), nada se perde: basta reabrir o endereço. Se aparecer a faixa vermelha **SERVIDOR DESCONECTADO**, reinicie com `--resume partidas/ultima.fen` — a página reconecta sozinha.
 
-| Comando | Ação |
+### Ações na Tela do Console Web
+
+| Ação | Como fazer |
 | --- | --- |
-| `e2e4` / `e4` / `Cf3` / `Cxf7` / `0-0` / `e8=D` | Registra lance do adversário em UCI, SAN Inglês ou SAN Português (exibe diagrama ASCII e pede `Enter` antes de enviar ao motor) |
-| `u` | Desfaz o último par de lances (caso um lance errado tenha sido confirmado) |
-| `t 12:34` | Sincroniza o nosso tempo restante no motor para 12 min e 34 s |
-| `t opp 14:20` | Sincroniza o tempo restante do adversário para 14 min e 20 s |
-| `perfil fraco` (ou `medio` / `forte` / `auto`) | Força manualmente o perfil do oponente na doutrina SunTzu |
-| `rapido` / `normal` | Alterna `TimeProfile` (quando o operador estiver demorando mais de 8 s por lance, use `rapido`) |
-| `fen` | Exibe o FEN atual e a lista completa de lances UCI na tela |
-| `--resume partidas/ultima.fen` | Recupera a partida em menos de 1 s (meta < 20 s) após reinício |
+| Registrar lance do adversário | Digite `e4` / `Cf3` / `Cxf7` / `0-0` / `e8=D` / `e7e5` e `Enter` (revisão) → `Enter` (confirma). Ou clique na peça e na casa de destino (ou arraste); a promoção abre um seletor |
+| Cancelar lance em revisão | `Esc` ou botão **Cancelar** |
+| Desfazer (lance confirmado errado) | `Ctrl+Z` ou botão **Desfazer** (reverte o lance do adversário + nossa resposta) |
+| Ler o nosso lance | Quadro verde no topo: peça, origem → destino, SAN e avisos de **CAPTURA / ROQUE / EN PASSANT / PROMOÇÃO / XEQUE**; seta verde no tabuleiro |
+| Motor demorando | Botão **Jogar agora** (envia `stop`; o motor joga o melhor lance encontrado) |
+| Sincronizar relógios | Clique em **Nosso relógio** ou **Adversário**, digite `mm:ss`, `Enter` |
+| Perfil do oponente | Seletor **Perfil do oponente** (auto / forte / médio / fraco) |
+| `TimeProfile` | Botões **Normal / Rápido** (use Rápido quando o operador demorar mais de 8 s por lance) |
+| Tempo fixo por lance | Campo **Tempo fixo por lance** (segundos) → **Aplicar**; **Auto** volta à gestão pelo relógio |
+| FEN / PGN | Botões **Copiar FEN** e **Baixar PGN** |
+| Nova partida | Botão **Nova partida** → escolher a cor |
+| Alertas de regra | Repetição tripla e 50 lances aparecem em destaque abaixo dos relógios |
 
 ---
 

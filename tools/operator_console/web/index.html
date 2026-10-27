@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SunTzu · Console</title>
+<style>
+  :root {
+    --bg: #0e0f0e;
+    --panel: #171917;
+    --panel-2: #1f221f;
+    --line: #2d312c;
+    --text: #ece5d3;
+    --muted: #9a9b92;
+    --gold: #d4ae52;
+    --ok: #7cc492;
+    --ok-bg: #14281b;
+    --warn: #e0ad55;
+    --warn-bg: #2f2512;
+    --err: #ec7d73;
+    --err-bg: #3a1714;
+    --sq-light: #e3cfa6;
+    --sq-dark: #9a6e4c;
+    --hl-last: rgba(222, 196, 92, 0.55);
+    --hl-engine: rgba(92, 190, 120, 0.65);
+    --hl-pending: rgba(240, 160, 60, 0.7);
+    --hl-sel: rgba(90, 150, 230, 0.6);
+    --dot: rgba(20, 30, 20, 0.35);
+    --check: rgba(220, 50, 40, 0.85);
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  .mono { font-family: ui-monospace, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
+
+  /* ---------- layout ---------- */
+  #disconnected {
+    display: none; position: fixed; inset: 0 0 auto 0; z-index: 50;
+    background: #b3261e; color: #fff; text-align: center; font-weight: 800;
+    padding: 10px 16px; font-size: 18px; letter-spacing: .03em;
+  }
+  body.offline #disconnected { display: block; }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 18px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: .02em; }
+  header h1 span { color: var(--gold); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); font-size: 13px; color: var(--muted);
+    white-space: nowrap;
+  }
+  .chip b { color: var(--text); font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+  .dot.bad { background: var(--err); }
+  header .spacer { flex: 1; }
+  main {
+    display: grid; grid-template-columns: minmax(320px, auto) minmax(380px, 1fr);
+    gap: 18px; padding: 16px 18px; align-items: start;
+  }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
+  }
+  .card h2 {
+    margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .row { display: flex; gap: 14px; }
+  .row > * { flex: 1; min-width: 0; }
+
+  /* ---------- board ---------- */
+  #boardWrap { position: relative; width: var(--board); height: var(--board); user-select: none; touch-action: none; }
+  :root { --board: min(calc(100vh - 150px), 46vw, 720px); }
+  @media (max-width: 980px) { :root { --board: min(calc(100vw - 36px), 640px); } }
+  #board {
+    display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+    width: 100%; height: 100%; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 3px #3a2b1e;
+  }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; }
+  .sq.light { background: var(--sq-light); }
+  .sq.dark { background: var(--sq-dark); }
+  .sq::before { content: ""; position: absolute; inset: 0; pointer-events: none; }
+  .sq.last::before { background: var(--hl-last); }
+  .sq.engine::before { background: var(--hl-engine); }
+  .sq.pending::before { background: var(--hl-pending); }
+  .sq.sel::before { background: var(--hl-sel); }
+  .sq.check::before { background: radial-gradient(circle, var(--check) 0%, rgba(220,50,40,.35) 55%, transparent 75%); }
+  .sq.dest::after {
+    content: ""; position: absolute; width: 28%; height: 28%; border-radius: 50%; background: var(--dot); pointer-events: none;
+  }
+  .sq.dest.cap::after { width: 86%; height: 86%; background: transparent; border: 6px solid var(--dot); }
+  .sq .coord { position: absolute; font-size: 11px; font-weight: 700; pointer-events: none; opacity: .8; }
+  .sq .coord.file { right: 4px; bottom: 2px; }
+  .sq .coord.rank { left: 4px; top: 2px; }
+  .sq.light .coord { color: var(--sq-dark); }
+  .sq.dark .coord { color: var(--sq-light); }
+  .pc {
+    position: relative; z-index: 2; font-size: calc(var(--board) / 8 * 0.78); line-height: 1;
+    font-variant-emoji: text; cursor: default; transition: transform .05s;
+    font-family: "DejaVu Sans", "Noto Sans Symbols 2", "Segoe UI Symbol", sans-serif;
+  }
+  .pc.w { color: #fffdf6; text-shadow: 0 0 2px #000, 0 0 1px #000, 1px 1px 0 #2a1d12; }
+  .pc.b { color: #161411; text-shadow: 0 0 2px rgba(255,255,255,.35); }
+  .pc.movable { cursor: grab; }
+  .pc.dragging { opacity: .25; }
+  #ghost {
+    position: fixed; z-index: 40; pointer-events: none; display: none; transform: translate(-50%, -50%);
+  }
+  #arrows { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+  #promo {
+    display: none; position: absolute; z-index: 10; inset: 0; background: rgba(0,0,0,.55);
+    align-items: center; justify-content: center; gap: 10px;
+  }
+  #promo.open { display: flex; }
+  #promo button {
+    width: calc(var(--board) / 6); height: calc(var(--board) / 6); border-radius: 12px; border: 2px solid var(--gold);
+    background: var(--panel); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  #promo button .pc { font-size: calc(var(--board) / 10); }
+  #promo button small { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  /* ---------- banner ---------- */
+  #banner { padding: 18px 20px; border-width: 2px; min-height: 172px; }
+  #banner.ours { border-color: var(--ok); background: linear-gradient(180deg, var(--ok-bg), var(--panel)); }
+  #banner.thinking { border-color: var(--warn); }
+  #banner.waiting { border-color: var(--line); }
+  #banner .kicker { font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  #banner.ours .kicker { color: var(--ok); }
+  #banner.thinking .kicker { color: var(--warn); }
+  #banner .big { font-size: clamp(40px, 5.2vw, 76px); font-weight: 800; line-height: 1.05; margin: 6px 0 4px; letter-spacing: .01em; }
+  #banner .big .arrow { color: var(--muted); font-weight: 400; margin: 0 .15em; }
+  #banner .sub { font-size: 20px; color: var(--text); }
+  #banner .sub .san { color: var(--gold); font-weight: 700; }
+  #banner .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .alerts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .alert {
+    padding: 7px 12px; border-radius: 8px; font-weight: 800; font-size: 16px;
+    background: var(--warn-bg); color: var(--warn); border: 1px solid #5a4418;
+  }
+  .alert.red { background: var(--err-bg); color: var(--err); border-color: #6a2a24; }
+  .pulse { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  /* ---------- input ---------- */
+  #entry label { display: block; font-size: 12px; color: var(--muted); letter-spacing: .09em; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; }
+  #moveInput {
+    width: 100%; font-size: 30px; font-weight: 700; padding: 10px 14px; border-radius: 8px;
+    border: 2px solid var(--line); background: #0b0c0b; outline: none; letter-spacing: .04em;
+  }
+  #moveInput:focus { border-color: var(--gold); }
+  #moveInput:disabled { opacity: .45; }
+  #preview { min-height: 24px; margin-top: 8px; font-size: 16px; }
+  #preview.ok { color: var(--ok); }
+  #preview.error { color: var(--err); }
+  #preview.warn { color: var(--warn); }
+  #confirm { display: none; }
+  #confirm.open { display: block; border: 2px solid var(--warn); background: linear-gradient(180deg, var(--warn-bg), var(--panel)); }
+  #confirm .q { font-size: 14px; color: var(--warn); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+  #confirm .what { font-size: 30px; font-weight: 800; margin: 6px 0 2px; }
+  #confirm .spoken { font-size: 18px; color: var(--text); }
+  .btns { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 9px 14px; cursor: pointer;
+    font-weight: 600; color: var(--text);
+  }
+  a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+  .btn:hover { border-color: #4a4f48; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.primary { background: var(--ok); color: #0b1a10; border-color: var(--ok); font-weight: 800; }
+  .btn.warn { background: var(--warn); color: #241a06; border-color: var(--warn); font-weight: 800; }
+  .btn.big { font-size: 20px; padding: 12px 22px; }
+  kbd {
+    font: 600 12px ui-monospace, monospace; padding: 1px 6px; border-radius: 4px; border: 1px solid #555;
+    background: #222; color: var(--text); margin-left: 6px;
+  }
+
+  /* ---------- clocks ---------- */
+  .clock { cursor: pointer; position: relative; }
+  .clock .who { font-size: 12px; color: var(--muted); letter-spacing: .09em; text-transform: uppercase; font-weight: 700; }
+  .clock .t { font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .clock.running { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+  .clock.low .t { color: var(--err); }
+  .clock .hint { font-size: 12px; color: var(--muted); }
+  .clock input {
+    width: 100%; font-size: 36px; font-weight: 800; padding: 2px 8px; border-radius: 6px; border: 2px solid var(--gold);
+    background: #0b0c0b; font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- engine / history ---------- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; }
+  .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .stat .v { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .evalbar { height: 12px; border-radius: 6px; background: #2b2b2b; overflow: hidden; margin: 6px 0 10px; position: relative; }
+  .evalbar .fill { position: absolute; inset: 0 auto 0 0; background: var(--ok); transition: width .3s; }
+  .evalbar .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #000; opacity: .5; }
+  .line { font-size: 14px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+  .line b { color: var(--text); font-weight: 600; }
+  #history { max-height: 220px; overflow-y: auto; font-variant-numeric: tabular-nums; }
+  #history table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  #history td { padding: 3px 6px; }
+  #history td.n { color: var(--muted); width: 3em; text-align: right; }
+  #history td.ours { color: var(--gold); font-weight: 700; }
+  #history tr:last-child td { background: var(--panel-2); }
+  #ruleAlerts:empty { display: none; }
+  #ruleAlerts .alert { display: block; font-size: 14px; margin-top: 6px; }
+  .ctl { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; }
+  .ctl .k { font-size: 13px; color: var(--muted); }
+  .ctl > * { justify-self: start; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel-2); padding: 7px 12px; cursor: pointer; font-weight: 600; }
+  .seg button.on { background: var(--gold); color: #1d1606; }
+  select, .ctl input {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+  }
+  .ctl input { width: 90px; }
+
+  /* ---------- status / overlays ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 45; max-width: min(90vw, 900px);
+    padding: 10px 18px; border-radius: 10px; font-weight: 600; background: var(--panel-2); border: 1px solid var(--line);
+    box-shadow: 0 8px 30px rgba(0,0,0,.5); opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+  #toast.success { border-color: var(--ok); color: var(--ok); }
+  #toast.error { border-color: var(--err); color: var(--err); background: var(--err-bg); }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
+  .modal {
+    display: none; position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.7);
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal.open { display: flex; }
+  .modal .card { max-width: 560px; width: 100%; padding: 24px; }
+  .modal h3 { margin: 0 0 8px; font-size: 28px; }
+  .help-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 15px; }
+  .help-grid .k { white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="disconnected">⚠ SERVIDOR DESCONECTADO — reconectando… (se não voltar: <span class="mono">python3 tools/operator_console/console.py --resume partidas/ultima.fen</span>)</div>
+
+<header>
+  <h1><span>SunTzu</span> · Console do Operador</h1>
+  <span class="chip"><span class="dot" id="healthDot"></span><b id="engineName">Motor</b> <span id="restarts"></span></span>
+  <span class="chip">Nós jogamos de <b id="ourColor">—</b></span>
+  <span class="chip">Lance <b id="fullmove">1</b> · 50 lances <b id="halfmove">0</b>/100</span>
+  <span class="spacer"></span>
+  <button class="btn" id="helpBtn" title="Atalhos (?)">? Ajuda</button>
+</header>
+
+<main>
+  <section class="col">
+    <div id="boardWrap">
+      <div id="board"></div>
+      <svg id="arrows" viewBox="0 0 800 800" preserveAspectRatio="none">
+        <defs>
+          <marker id="headEngine" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 z" fill="rgba(40,150,80,.9)"/></marker>
+          <marker id="headPending" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 z" fill="rgba(230,130,20,.95)"/></marker>
+        </defs>
+      </svg>
+      <div id="promo"></div>
+    </div>
+  </section>
+
+  <section class="col">
+    <div class="card" id="banner">
+      <div class="kicker" id="bKicker">Conectando…</div>
+      <div class="big" id="bBig">—</div>
+      <div class="sub" id="bSub"></div>
+      <div class="alerts" id="bAlerts"></div>
+      <div class="meta" id="bMeta"></div>
+      <div class="btns" id="bBtns"></div>
+    </div>
+
+    <div class="card" id="entry">
+      <label for="moveInput">Lance do adversário — digite (e4, Cf6, Cxe5, 0-0, e8=D, e7e5) ou clique/arraste no tabuleiro</label>
+      <input id="moveInput" class="mono" autocomplete="off" spellcheck="false" placeholder="ex.: Cf6">
+      <div id="preview"></div>
+    </div>
+
+    <div class="card" id="confirm">
+      <div class="q">Confirmar lance do adversário?</div>
+      <div class="what" id="cWhat"></div>
+      <div class="spoken" id="cSpoken"></div>
+      <div class="alerts" id="cAlerts"></div>
+      <div class="btns">
+        <button class="btn primary big" id="cYes">Confirmar <kbd>Enter</kbd></button>
+        <button class="btn big" id="cNo">Cancelar <kbd>Esc</kbd></button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card clock" id="clockOurs" title="Clique para sincronizar com o relógio físico">
+        <div class="who">Nosso relógio</div>
+        <div class="t" id="tOurs">--:--</div>
+        <div class="hint">clique para ajustar</div>
+      </div>
+      <div class="card clock" id="clockOpp" title="Clique para sincronizar com o relógio físico">
+        <div class="who">Adversário</div>
+        <div class="t" id="tOpp">--:--</div>
+        <div class="hint">clique para ajustar</div>
+      </div>
+    </div>
+
+    <div id="ruleAlerts"></div>
+
+    <div class="row">
+      <div class="card">
+        <h2>Motor</h2>
+        <div class="evalbar"><div class="fill" id="evalFill" style="width:50%"></div><div class="mid"></div></div>
+        <div class="stats">
+          <div class="stat"><div class="k">Avaliação</div><div class="v" id="sEval">—</div></div>
+          <div class="stat"><div class="k">Profund.</div><div class="v" id="sDepth">—</div></div>
+          <div class="stat"><div class="k">Nós/s</div><div class="v" id="sNps">—</div></div>
+          <div class="stat"><div class="k">Nós</div><div class="v" id="sNodes">—</div></div>
+        </div>
+        <div class="line">Linha: <b id="sPv">—</b></div>
+        <div class="line">Ponder: <b id="sPonder">—</b></div>
+        <div class="line" id="sSuntzu"></div>
+      </div>
+      <div class="card">
+        <h2>Lances</h2>
+        <div id="history"><table><tbody id="histBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Controles</h2>
+      <div class="btns" style="margin-top:0">
+        <button class="btn" id="undoBtn">↶ Desfazer <kbd>Ctrl+Z</kbd></button>
+        <button class="btn" id="newBtn">Nova partida</button>
+        <button class="btn" id="fenBtn">Copiar FEN</button>
+        <a class="btn" id="pgnBtn" href="/api/pgn" style="text-decoration:none">Baixar PGN</a>
+      </div>
+      <div class="ctl" style="margin-top:14px">
+        <span class="k">Perfil do oponente</span>
+        <span><select id="profileSel">
+          <option value="auto">auto (detectar)</option>
+          <option value="forte">forte</option>
+          <option value="medio">médio</option>
+          <option value="fraco">fraco</option>
+        </select></span>
+        <span class="k">Controle de tempo</span>
+        <span class="seg" id="tpSeg"><button data-v="normal">Normal</button><button data-v="rapido">Rápido</button></span>
+        <span class="k">Tempo fixo por lance</span>
+        <span><input id="mtInput" type="number" min="0" step="0.5" placeholder="auto"> s <button class="btn" id="mtBtn">Aplicar</button> <button class="btn" id="mtAuto">Auto</button></span>
+      </div>
+      <div class="line" id="cfgLine"></div>
+    </div>
+  </section>
+</main>
+
+<div id="ghost" class="pc"></div>
+<div id="toast"></div>
+
+<div class="modal" id="overModal"><div class="card">
+  <h3 id="overTitle">Fim de partida</h3>
+  <div class="line" id="overReason" style="font-size:18px"></div>
+  <div class="btns">
+    <button class="btn" id="overUndo">↶ Desfazer último lance</button>
+    <button class="btn primary" id="overNew">Nova partida</button>
+    <button class="btn" id="overClose">Fechar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="newModal"><div class="card">
+  <h3>Nova partida</h3>
+  <div class="line">O tabuleiro e os relógios serão reiniciados (a partida atual continua salva em <span class="mono">partidas/</span>).</div>
+  <div class="btns">
+    <button class="btn primary" data-color="white">Jogamos de BRANCAS</button>
+    <button class="btn primary" data-color="black">Jogamos de PRETAS</button>
+    <button class="btn" id="newCancel">Cancelar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="helpModal"><div class="card">
+  <h3>Atalhos</h3>
+  <div class="help-grid">
+    <span class="k"><kbd>Enter</kbd></span><span>Revisar o lance digitado → <kbd>Enter</kbd> de novo confirma</span>
+    <span class="k"><kbd>Esc</kbd></span><span>Cancelar confirmação / limpar seleção</span>
+    <span class="k"><kbd>Ctrl+Z</kbd></span><span>Desfazer (lance do adversário + nossa resposta)</span>
+    <span class="k">Clique / arraste</span><span>Mover a peça do adversário no tabuleiro</span>
+    <span class="k">Clique no relógio</span><span>Sincronizar com o relógio físico (mm:ss)</span>
+    <span class="k">Notação</span><span>C=Cavalo, B=Bispo, T=Torre, D=Dama, R=Rei · 0-0 / 0-0-0 · e8=D · também aceita inglês e UCI</span>
+  </div>
+  <div class="btns"><button class="btn" id="helpClose">Fechar <kbd>Esc</kbd></button></div>
+</div></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const PT_PIECE = { k: "Rei", q: "Dama", r: "Torre", b: "Bispo", n: "Cavalo", p: "Peão" };
+const FILES = "abcdefgh";
+
+let S = null;               // último snapshot do servidor
+let clockSkew = 0;          // server_time - relógio local (s)
+let selected = null;        // casa selecionada (ex.: "e7")
+let pending = null;         // lance aguardando confirmação {uci, info}
+let preview = null;         // pré-visualização do texto digitado
+let lastAnnouncedPly = null;
+let lastMsgAt = 0;
+let parseSeq = 0;
+
+// ---------------------------------------------------------------- rede
+async function post(path, body) {
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const res = await r.json();
+    if (res.message) toast(res.message, res.level || (res.ok ? "success" : "error"));
+    return res;
+  } catch (e) {
+    toast("Falha de comunicação com o servidor.", "error");
+    return { ok: false };
+  }
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onopen = () => setOnline(true);
+  es.onmessage = (ev) => { lastMsgAt = Date.now(); setOnline(true); apply(JSON.parse(ev.data)); };
+  es.onerror = () => setOnline(false);
+}
+function setOnline(on) { document.body.classList.toggle("offline", !on); }
+setInterval(() => { if (lastMsgAt && Date.now() - lastMsgAt > 6000) setOnline(false); }, 1000);
+
+// ---------------------------------------------------------------- helpers
+function squareXY(sq) {
+  const f = FILES.indexOf(sq[0]), r = parseInt(sq[1], 10) - 1;
+  const white = !S || S.our_color === "white";
+  return white ? { col: f, row: 7 - r } : { col: 7 - f, row: r };
+}
+function fmtClock(ms) {
+  ms = Math.max(0, ms);
+  const t = Math.floor(ms / 1000), m = Math.floor(t / 60), s = t % 60;
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+function fmtNum(n) {
+  if (n == null) return "—";
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + "G";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + "k";
+  return String(n);
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+let toastTimer = null;
+function toast(msg, level) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show " + (level || "info");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = level || ""), level === "error" ? 6000 : 3500);
+}
+function alertChips(container, alerts) {
+  container.replaceChildren();
+  for (const a of alerts || []) {
+    const red = /CAPTURA|XEQUE|PROMOVE|EN PASSANT/.test(a);
+    container.appendChild(el("div", "alert" + (red ? " red" : ""), a));
+  }
+}
+function canEnterMove() { return S && !S.is_our_turn && !S.thinking && !S.game_over; }
+
+// ---------------------------------------------------------------- render
+function apply(snap) {
+  const prev = S;
+  S = snap;
+  clockSkew = snap.server_time - Date.now() / 1000;
+  if (prev && prev.fen !== snap.fen) { selected = null; if (pending) closeConfirm(); clearPreview(); }
+  renderHeader();
+  renderBoard();
+  renderBanner();
+  renderEntry();
+  renderEngine();
+  renderHistory();
+  renderControls();
+  renderClocks();
+  renderOver(prev);
+  const lm = snap.last_our_move;
+  if (lm && lm.ply !== lastAnnouncedPly) {
+    if (lastAnnouncedPly !== null) beep();
+    lastAnnouncedPly = lm.ply;
+  }
+  document.title = snap.thinking ? "⏳ SunTzu pensando…" : (lm ? "▶ " + lm.san_pt + " — SunTzu" : "SunTzu · Console");
+}
+
+function renderHeader() {
+  const e = S.engine;
+  $("engineName").textContent = e.engine_name || "Motor";
+  $("healthDot").className = "dot" + (e.is_healthy ? "" : " bad");
+  $("restarts").textContent = e.restart_count ? `· ${e.restart_count} reinício(s)` : "· OK";
+  $("ourColor").textContent = S.our_color === "white" ? "BRANCAS" : "PRETAS";
+  $("fullmove").textContent = S.fullmove;
+  $("halfmove").textContent = S.halfmove_clock;
+}
+
+function renderBoard() {
+  const board = $("board");
+  board.replaceChildren();
+  const engineSqs = S.last_our_move && !S.is_our_turn ? [S.last_our_move.from_sq, S.last_our_move.to_sq] : [];
+  const lastSqs = S.last_move ? [S.last_move.from, S.last_move.to] : [];
+  const showPending = pending || preview;
+  const pendSqs = showPending ? [showPending.from_sq, showPending.to_sq] : [];
+  const dests = new Map();
+  if (selected && canEnterMove()) for (const m of S.legal) if (m.from === selected) dests.set(m.to, true);
+  const white = S.our_color === "white";
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const f = white ? col : 7 - col, r = white ? 7 - row : row;
+      const sq = FILES[f] + (r + 1);
+      const d = el("div", "sq " + ((f + r) % 2 === 1 ? "light" : "dark"));
+      d.dataset.sq = sq;
+      if (pendSqs.includes(sq)) d.classList.add("pending");
+      else if (engineSqs.includes(sq)) d.classList.add("engine");
+      else if (lastSqs.includes(sq)) d.classList.add("last");
+      if (sq === selected) d.classList.add("sel");
+      if (sq === S.check_square) d.classList.add("check");
+      const p = S.pieces[sq];
+      if (dests.has(sq)) d.classList.add("dest", p ? "cap" : "x");
+      if (row === 7) d.appendChild(el("span", "coord file", FILES[f]));
+      if (col === 0) d.appendChild(el("span", "coord rank", String(r + 1)));
+      if (p) {
+        const isW = p === p.toUpperCase();
+        const pc = el("span", "pc " + (isW ? "w" : "b"), GLYPH[p.toLowerCase()]);
+        if (canEnterMove() && (isW ? "white" : "black") === S.turn) pc.classList.add("movable");
+        d.appendChild(pc);
+      }
+      board.appendChild(d);
+    }
+  }
+  renderArrows(engineSqs, pendSqs);
+}
+
+function renderArrows(engineSqs, pendSqs) {
+  const svg = $("arrows");
+  [...svg.querySelectorAll("line")].forEach((l) => l.remove());
+  const draw = (a, b, color, head) => {
+    const p = squareXY(a), q = squareXY(b);
+    const x1 = p.col * 100 + 50, y1 = p.row * 100 + 50, x2 = q.col * 100 + 50, y2 = q.row * 100 + 50;
+    const len = Math.hypot(x2 - x1, y2 - y1), k = (len - 34) / len;
+    const ln = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    ln.setAttribute("x1", x1); ln.setAttribute("y1", y1);
+    ln.setAttribute("x2", x1 + (x2 - x1) * k); ln.setAttribute("y2", y1 + (y2 - y1) * k);
+    ln.setAttribute("stroke", color); ln.setAttribute("stroke-width", 16); ln.setAttribute("stroke-linecap", "round");
+    ln.setAttribute("marker-end", `url(#${head})`);
+    svg.appendChild(ln);
+  };
+  if (pendSqs.length) draw(pendSqs[0], pendSqs[1], "rgba(230,130,20,.85)", "headPending");
+  else if (engineSqs.length) draw(engineSqs[0], engineSqs[1], "rgba(40,150,80,.8)", "headEngine");
+}
+
+function renderBanner() {
+  const b = $("banner"), k = $("bKicker"), big = $("bBig"), sub = $("bSub"), meta = $("bMeta"), btns = $("bBtns");
+  btns.replaceChildren();
+  $("bAlerts").replaceChildren();
+  big.replaceChildren();
+  sub.replaceChildren();
+  meta.textContent = "";
+  if (S.thinking) {
+    b.className = "card thinking";
+    k.textContent = "SunTzu calculando";
+    k.classList.add("pulse");
+    big.textContent = "PENSANDO…";
+    const e = S.engine;
+    sub.textContent = e.depth ? `profundidade ${e.depth} · ${fmtNum(e.nps)} nós/s` : "iniciando busca…";
+    const now = $("bBtns").appendChild(el("button", "btn warn", "Jogar agora"));
+    now.onclick = () => post("/api/move-now");
+    return;
+  }
+  k.classList.remove("pulse");
+  const lm = S.last_our_move;
+  if (lm && !S.is_our_turn) {
+    b.className = "card ours";
+    k.textContent = "▶ Execute no tabuleiro — nosso lance";
+    const moved = S.pieces[lm.to_sq];
+    const pieceName = lm.is_castling ? "ROQUE" : lm.is_promotion ? "PEÃO" : (moved ? PT_PIECE[moved.toLowerCase()].toUpperCase() : "");
+    big.append(pieceName + " " + lm.from_sq, el("span", "arrow", "→"), lm.to_sq);
+    sub.append(el("span", "san", lm.san_pt), " — " + lm.spoken);
+    alertChips($("bAlerts"), lm.alerts);
+    meta.textContent = lm.origin + (S.engine.ponder_san ? ` · ponderando a resposta ${S.engine.ponder_san}` : "");
+    return;
+  }
+  b.className = "card waiting";
+  if (S.game_over) {
+    k.textContent = "Partida encerrada";
+    big.textContent = S.result;
+    sub.textContent = S.result_reason || "";
+  } else if (S.is_our_turn) {
+    k.textContent = "Nossa vez";
+    big.textContent = "Aguardando motor…";
+  } else {
+    k.textContent = "Vez do adversário";
+    big.textContent = "Digite o lance";
+    sub.textContent = "Quando o adversário soltar a peça e apertar o relógio.";
+  }
+}
+
+function renderEntry() {
+  const inp = $("moveInput");
+  const ok = canEnterMove();
+  inp.disabled = !ok;
+  if (!ok) { inp.placeholder = S.thinking ? "motor calculando…" : (S.game_over ? "partida encerrada" : "aguarde"); }
+  else { inp.placeholder = "ex.: Cf6"; if (!pending && document.activeElement !== inp && !isEditingElsewhere()) inp.focus(); }
+}
+function isEditingElsewhere() {
+  const a = document.activeElement;
+  return a && a !== document.body && a.id !== "moveInput" && (a.tagName === "INPUT" || a.tagName === "SELECT");
+}
+
+function renderEngine() {
+  const e = S.engine;
+  let evalTxt = "—", pct = 50;
+  if (e.score_mate != null) { evalTxt = "#" + e.score_mate; pct = e.score_mate > 0 ? 100 : 0; }
+  else if (e.eval_cp != null) {
+    evalTxt = (e.eval_cp >= 0 ? "+" : "") + (e.eval_cp / 100).toFixed(2);
+    pct = 50 + 50 * Math.tanh(e.eval_cp / 400);
+  }
+  $("sEval").textContent = evalTxt;
+  $("evalFill").style.width = pct + "%";
+  $("sDepth").textContent = e.depth ? e.depth + (e.seldepth ? "/" + e.seldepth : "") : "—";
+  $("sNps").textContent = fmtNum(e.nps);
+  $("sNodes").textContent = fmtNum(e.nodes);
+  $("sPv").textContent = e.book_info ? "livro: " + e.book_info : (e.pv_pt && e.pv_pt.length ? e.pv_pt.join(" ") : "—");
+  $("sPonder").textContent = e.ponder_san ? `esperando ${e.ponder_san}` : (S.settings.ponder ? "inativo" : "desligado");
+  $("sSuntzu").textContent = e.suntzu_info || "";
+  const ra = $("ruleAlerts");
+  ra.replaceChildren();
+  for (const a of S.rule_alerts) ra.appendChild(el("div", "alert" + (/AGORA|REIVINDIQUE/.test(a) ? " red" : ""), a));
+}
+
+function renderHistory() {
+  const tb = $("histBody");
+  tb.replaceChildren();
+  const h = S.history;
+  const td = (m) => el("td", m.ours ? "ours" : null, m.san);
+  let i = 0, n = S.start_fullmove;
+  if (S.start_turn === "black" && h.length) {
+    const tr = el("tr");
+    tr.append(el("td", "n", n + "."), el("td", null, "…"), td(h[0]));
+    tb.appendChild(tr);
+    i = 1; n++;
+  }
+  for (; i < h.length; i += 2, n++) {
+    const tr = el("tr");
+    tr.append(el("td", "n", n + "."), td(h[i]), h[i + 1] ? td(h[i + 1]) : el("td"));
+    tb.appendChild(tr);
+  }
+  const box = $("history");
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderControls() {
+  const st = S.settings;
+  const sel = $("profileSel");
+  if (document.activeElement !== sel) sel.value = st.profile;
+  for (const btn of $("tpSeg").children) btn.classList.toggle("on", btn.dataset.v === st.time_profile);
+  const mt = $("mtInput");
+  if (document.activeElement !== mt) mt.value = st.movetime_sec != null ? st.movetime_sec : "";
+  $("undoBtn").disabled = S.thinking || S.history.length === 0;
+  $("cfgLine").textContent = `Threads ${st.threads} · Hash ${st.hash} MB · Ponder ${st.ponder ? "ligado" : "desligado"} · autosave em ${S.save_dir}`;
+}
+
+function renderClocks() {
+  if (!S) return;
+  const now = Date.now() / 1000 + clockSkew;
+  const ourKey = S.our_color === "white" ? "white_ms" : "black_ms";
+  const oppKey = S.our_color === "white" ? "black_ms" : "white_ms";
+  let ours = S.clocks[ourKey], opp = S.clocks[oppKey];
+  let runOurs = false, runOpp = false;
+  if (!S.game_over) {
+    if (S.thinking && S.search_started_at) { ours -= (now - S.search_started_at) * 1000; runOurs = true; }
+    else if (!S.is_our_turn) { opp -= (now - S.turn_started_at) * 1000; runOpp = true; }
+  }
+  setClock("clockOurs", "tOurs", ours, runOurs);
+  setClock("clockOpp", "tOpp", opp, runOpp);
+}
+function setClock(cardId, tId, ms, running) {
+  const card = $(cardId);
+  if (card.querySelector("input")) return;
+  card.classList.toggle("running", running);
+  card.classList.toggle("low", ms < 120000);
+  $(tId).textContent = fmtClock(ms);
+}
+setInterval(renderClocks, 250);
+
+function editClock(side) {
+  const card = $(side === "ours" ? "clockOurs" : "clockOpp");
+  if (card.querySelector("input")) return;
+  const t = card.querySelector(".t");
+  const inp = el("input", "mono");
+  inp.value = t.textContent;
+  inp.placeholder = "mm:ss";
+  t.replaceWith(inp);
+  inp.focus(); inp.select();
+  let finished = false;
+  const done = async (save) => {
+    // remover o input dispara 'blur' de forma síncrona; a flag evita a reentrada
+    if (finished) return;
+    finished = true;
+    const v = inp.value.trim();
+    inp.replaceWith(t);
+    if (save && v) await post("/api/clock", { side, value: v });
+    renderClocks();
+    $("moveInput").focus();
+  };
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+  });
+  inp.addEventListener("blur", () => done(false));
+}
+$("clockOurs").onclick = () => editClock("ours");
+$("clockOpp").onclick = () => editClock("opp");
+
+let overShownFor = null;
+function renderOver(prev) {
+  if (S.game_over && overShownFor !== S.fen) {
+    overShownFor = S.fen;
+    $("overTitle").textContent = "Fim de partida: " + S.result;
+    $("overReason").textContent = S.result_reason || "";
+    $("overModal").classList.add("open");
+  }
+  if (!S.game_over) $("overModal").classList.remove("open");
+}
+
+// ---------------------------------------------------------------- entrada por texto
+function clearPreview() { preview = null; $("preview").textContent = ""; $("preview").className = ""; }
+let parseTimer = null;
+$("moveInput").addEventListener("input", () => {
+  clearTimeout(parseTimer);
+  const v = $("moveInput").value.trim();
+  if (!v) { clearPreview(); renderBoard(); return; }
+  parseTimer = setTimeout(() => livePreview(v), 120);
+});
+async function livePreview(v) {
+  const seq = ++parseSeq;
+  let res;
+  try {
+    res = await (await fetch("/api/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ move: v }) })).json();
+  } catch (e) { return; }
+  if (seq !== parseSeq || $("moveInput").value.trim() !== v) return;
+  const p = $("preview");
+  if (res.ok) {
+    preview = res.move;
+    p.className = "ok";
+    p.textContent = `✓ ${res.move.san_pt} — ${res.move.spoken}   (Enter para revisar)`;
+  } else {
+    preview = null;
+    p.className = res.level === "warn" ? "warn" : "error";
+    p.textContent = "✗ " + res.message;
+  }
+  renderBoard();
+  return res;
+}
+$("moveInput").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter" || pending) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const v = $("moveInput").value.trim();
+  if (!v) return;
+  clearTimeout(parseTimer);
+  const res = await livePreview(v);
+  if (res && res.ok) openConfirm(res.move);
+});
+
+// ---------------------------------------------------------------- confirmação
+function openConfirm(info) {
+  if (S.settings && S.settings.confirm === false) { sendMove(info.uci); return; }
+  pending = info;
+  $("cWhat").textContent = info.san_pt + "  (" + info.from_sq + " → " + info.to_sq + ")";
+  $("cSpoken").textContent = info.spoken;
+  alertChips($("cAlerts"), info.alerts);
+  $("confirm").classList.add("open");
+  $("entry").style.display = "none";
+  $("cYes").focus();
+  renderBoard();
+}
+function closeConfirm() {
+  pending = null;
+  $("confirm").classList.remove("open");
+  $("entry").style.display = "";
+  if (S) renderBoard();
+  setTimeout(() => $("moveInput").focus(), 0);
+}
+let sending = false;
+async function sendMove(uci) {
+  if (sending) return;
+  sending = true;
+  try {
+    const res = await post("/api/move", { move: uci });
+    if (res.ok) { $("moveInput").value = ""; clearPreview(); }
+  } finally {
+    sending = false;
+    closeConfirm();
+  }
+}
+$("cYes").onclick = () => pending && sendMove(pending.uci);
+$("cNo").onclick = () => { closeConfirm(); toast("Lance cancelado — digite novamente.", "warn"); };
+
+// ---------------------------------------------------------------- entrada por clique / arraste
+async function tryBoardMove(from, to) {
+  const cands = S.legal.filter((m) => m.from === from && m.to === to);
+  if (!cands.length) return false;
+  let uci = cands[0].uci;
+  if (cands.length > 1) {
+    uci = await pickPromotion(cands);
+    if (!uci) return true;
+  }
+  selected = null;
+  $("moveInput").value = "";
+  const res = await post("/api/parse", { move: uci });
+  if (res.ok) openConfirm(res.move); else renderBoard();
+  return true;
+}
+function pickPromotion(cands) {
+  return new Promise((resolve) => {
+    const box = $("promo");
+    box.replaceChildren();
+    const white = S.turn === "white";
+    for (const [k, name] of [["q", "Dama"], ["r", "Torre"], ["b", "Bispo"], ["n", "Cavalo"]]) {
+      const m = cands.find((c) => c.promo === k);
+      if (!m) continue;
+      const b = el("button");
+      b.append(el("span", "pc " + (white ? "w" : "b"), GLYPH[k]), el("small", null, name));
+      b.onclick = () => { box.classList.remove("open"); resolve(m.uci); };
+      box.appendChild(b);
+    }
+    box.onclick = (e) => { if (e.target === box) { box.classList.remove("open"); resolve(null); } };
+    box.classList.add("open");
+  });
+}
+function isMovablePiece(sq) {
+  const p = S && S.pieces[sq];
+  if (!p || !canEnterMove()) return false;
+  return (p === p.toUpperCase() ? "white" : "black") === S.turn;
+}
+let drag = null;
+$("board").addEventListener("pointerdown", (e) => {
+  const sqEl = e.target.closest(".sq");
+  if (!sqEl || !S || pending) return;
+  const sq = sqEl.dataset.sq;
+  if (selected && selected !== sq && S.legal.some((m) => m.from === selected && m.to === sq)) {
+    tryBoardMove(selected, sq);
+    return;
+  }
+  if (isMovablePiece(sq)) {
+    selected = selected === sq ? null : sq;
+    clearPreview();
+    renderBoard();
+    if (selected) {
+      const pcEl = document.querySelector(`.sq[data-sq="${sq}"] .pc`);
+      const g = $("ghost");
+      g.textContent = pcEl.textContent;
+      g.className = pcEl.className.replace("movable", "");
+      g.style.fontSize = getComputedStyle(pcEl).fontSize;
+      drag = { from: sq, pcEl, moved: false, x: e.clientX, y: e.clientY };
+      $("board").setPointerCapture(e.pointerId);
+    }
+  } else {
+    selected = null;
+    renderBoard();
+  }
+  e.preventDefault();
+});
+$("board").addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+  drag.moved = true;
+  const g = $("ghost");
+  g.style.display = "block";
+  g.style.left = e.clientX + "px";
+  g.style.top = e.clientY + "px";
+  const cur = document.querySelector(`.sq[data-sq="${drag.from}"] .pc`);
+  if (cur) cur.classList.add("dragging");
+});
+$("board").addEventListener("pointerup", (e) => {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  $("ghost").style.display = "none";
+  if (!d.moved) return;
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  const sqEl = target && target.closest(".sq");
+  if (sqEl && sqEl.dataset.sq !== d.from) {
+    tryBoardMove(d.from, sqEl.dataset.sq).then((ok) => { if (!ok) { selected = null; renderBoard(); } });
+  } else {
+    renderBoard();
+  }
+});
+
+// ---------------------------------------------------------------- controles
+$("undoBtn").onclick = () => post("/api/undo");
+$("newBtn").onclick = () => $("newModal").classList.add("open");
+$("newCancel").onclick = () => $("newModal").classList.remove("open");
+for (const b of $("newModal").querySelectorAll("[data-color]")) {
+  b.onclick = async () => { $("newModal").classList.remove("open"); $("overModal").classList.remove("open"); await post("/api/new", { color: b.dataset.color }); };
+}
+$("overUndo").onclick = async () => { $("overModal").classList.remove("open"); await post("/api/undo"); };
+$("overNew").onclick = () => { $("overModal").classList.remove("open"); $("newModal").classList.add("open"); };
+$("overClose").onclick = () => $("overModal").classList.remove("open");
+$("fenBtn").onclick = async () => {
+  try { await navigator.clipboard.writeText(S.fen); toast("FEN copiado: " + S.fen, "success"); }
+  catch (e) { toast("FEN: " + S.fen, "info"); }
+};
+$("profileSel").onchange = (e) => post("/api/settings", { profile: e.target.value });
+for (const b of $("tpSeg").children) b.onclick = () => post("/api/settings", { time_profile: b.dataset.v });
+$("mtBtn").onclick = () => post("/api/settings", { movetime_sec: $("mtInput").value || null });
+$("mtAuto").onclick = () => { $("mtInput").value = ""; post("/api/settings", { movetime_sec: null }); };
+$("helpBtn").onclick = () => $("helpModal").classList.add("open");
+$("helpClose").onclick = () => $("helpModal").classList.remove("open");
+
+document.addEventListener("keydown", (e) => {
+  const openModal = document.querySelector(".modal.open");
+  if (e.key === "Escape") {
+    if (openModal) { openModal.classList.remove("open"); return; }
+    if (pending) { closeConfirm(); toast("Lance cancelado — digite novamente.", "warn"); return; }
+    selected = null; $("moveInput").value = ""; clearPreview(); if (S) renderBoard();
+    return;
+  }
+  if (e.key === "Enter" && pending && !openModal) {
+    if (document.activeElement && document.activeElement.tagName === "BUTTON") return; // o próprio botão trata o Enter
+    e.preventDefault(); sendMove(pending.uci); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !openModal) {
+    if (document.activeElement && document.activeElement.id === "moveInput" && $("moveInput").value) return;
+    e.preventDefault(); post("/api/undo"); return;
+  }
+  if (e.key === "?" && document.activeElement.tagName !== "INPUT") { $("helpModal").classList.add("open"); }
+});
+
+// beep curto quando o lance do motor fica pronto
+let audioCtx = null;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; g.gain.value = 0.12;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.18);
+  } catch (e) { /* sem áudio */ }
+}
+
+fetch("/api/state").then((r) => r.json()).then(apply).catch(() => setOnline(false));
+connect();
+</script>
+</body>
+</html>

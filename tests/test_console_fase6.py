@@ -9,7 +9,8 @@ Testes Automatizados da Fase 6 — Console do Operador Anti-Crash:
 5. Watchdog Anti-Crash: mata o processo do motor (SIGKILL) e congela o processo (SIGSTOP) no meio
    da partida, validando reinício automático e continuação transparente.
 6. Alertas de repetição tripla e regra dos 50 lances (com recomendação de reivindicar quando perdendo).
-7. Teste de ponta a ponta da CLI interativa via stdin/stdout.
+7. Teste de ponta a ponta da CLI interativa via stdin/stdout (--text).
+8. Teste de ponta a ponta do console web (HTTP + SSE).
 """
 
 import os
@@ -18,6 +19,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -268,6 +270,7 @@ def test_cli_end_to_end(engine_path: str):
                 "pretas",
                 "--save-dir",
                 tmpdir,
+                "--text",
             ],
             input=script_input,
             text=True,
@@ -464,6 +467,83 @@ def test_50_ponder_games_stress(engine_path: str):
     )
 
 
+def test_web_console_end_to_end(engine_path: str):
+    import argparse
+    import json
+    import urllib.request
+
+    from tools.operator_console.server import ConsoleController, create_server
+
+    print("=== [5.5/7] Testando Console Web de Ponta a Ponta (HTTP + SSE) ===")
+    tmpdir = tempfile.mkdtemp(prefix="suntzu_web_test_")
+    engine = WatchdogEngine(engine_path, options={"Threads": "1", "Hash": "16", "Ponder": "true"})
+    session = GameSession(engine=engine, our_color=chess.BLACK, save_dir=tmpdir)
+    args = argparse.Namespace(overhead_ms=7000, panic_sec=120, no_confirm=False)
+    controller = ConsoleController(engine, session, args, movetime_override_ms=200)
+    httpd = create_server(controller, 0)
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    server_thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+    server_thread.start()
+    controller.start()
+
+    def call(path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+
+    def wait_state(pred, timeout=15.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            st = call("/api/state")
+            if pred(st):
+                return st
+            time.sleep(0.05)
+        raise AssertionError("Estado esperado não foi atingido no console web")
+
+    try:
+        with urllib.request.urlopen(base + "/", timeout=5) as r:
+            assert b"Console do Operador" in r.read()
+
+        st = call("/api/state")
+        assert st["our_color"] == "black" and not st["is_our_turn"] and len(st["legal"]) == 20
+
+        res = call("/api/move", {"move": "e2e5"})
+        assert not res["ok"] and "[LANCE REJEITADO]" in res["message"]
+
+        prev = call("/api/parse", {"move": "Cf3"})
+        assert prev["ok"] and prev["move"]["uci"] == "g1f3" and prev["move"]["san_pt"] == "Cf3"
+
+        res = call("/api/move", {"move": "e4"})
+        assert res["ok"], res
+        st = wait_state(lambda s: s["last_our_move"] is not None and not s["thinking"])
+        assert len(st["history"]) == 2 and not st["is_our_turn"]
+        assert st["last_our_move"]["uci"] == st["history"][1]["uci"]
+
+        with urllib.request.urlopen(base + "/events", timeout=5) as r:
+            line = r.readline()
+            assert line.startswith(b"data: ")
+            assert json.loads(line[6:].decode())["fen"] == st["fen"]
+
+        res = call("/api/clock", {"side": "ours", "value": "24:10"})
+        assert res["ok"] and "24:10" in res["message"]
+        assert call("/api/state")["clocks"]["black_ms"] == 24 * 60 * 1000 + 10 * 1000
+
+        res = call("/api/undo", {})
+        assert res["ok"] and "[DESFEITO]" in res["message"]
+        st = call("/api/state")
+        assert st["history"] == [] and st["last_our_move"] is None
+
+        assert os.path.isfile(os.path.join(tmpdir, "ultima.fen"))
+        assert os.path.isfile(os.path.join(tmpdir, "ultima.pgn"))
+        print("  -> Lance rejeitado, pré-visualização PT, resposta do motor, SSE, relógio e desfazer: OK")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        controller.close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     engine_bin = os.path.join(ROOT_DIR, "bin", "suntzu-native")
     if not os.path.isfile(engine_bin):
@@ -475,6 +555,7 @@ if __name__ == "__main__":
     test_watchdog_anticrash(engine_bin)
     test_rule_alerts()
     test_cli_end_to_end(engine_bin)
+    test_web_console_end_to_end(engine_bin)
     test_three_simulated_training_games(engine_bin)
     test_50_ponder_games_stress(engine_bin)
     print("\nSUCESSO: Todos os testes do Console Anti-Crash da Fase 6 passaram!")
