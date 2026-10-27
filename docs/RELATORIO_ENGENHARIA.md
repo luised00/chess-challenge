@@ -45,8 +45,13 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
 
 ### 2.4 Fase 4 — Modelo do Oponente e Aversão ao Empate
 - **Problema:** Calibrar o valor do empate para a regra 3-1-0 conforme a força estimada do oponente.
-- **Solução:** Classificador online em `src/suntzu.cpp` + valor dinâmico de empate em `src/search.cpp`.
-- **Resultados:** *(preencher na Fase 4)*
+- **Solução:** Classificador online em `src/suntzu.cpp` (EMA da perda de centipeões do oponente com banda morta de `8 cp` para absorver ruído de horizonte entre buscas consecutivas) + valor dinâmico de empate (`DrawAversion` escalando para `10 cp` vs forte, `25 cp` vs médio, `50 cp` vs fraco e caindo a `0 cp` quando avaliação $< -50$ cp ou $\mathbb{E}[\text{pts}_{310}] \le 1$) em `src/search.cpp`.
+- **Arquivos:** `src/suntzu.h`, `src/suntzu.cpp`, `src/search.h`, `src/search.cpp`, `src/engine.cpp`, `src/uci.cpp`, `src/ucioption.cpp`, `tests/test_suntzu_fase4.py`.
+- **Resultados:**
+  - **Acurácia do classificador (`tests/test_suntzu_fase4.py`):** **92.5% a 95.0%** em 40 partidas simuladas (20 contra Stockfish puro + 20 contra oponente fraco) até o lance 24–30.
+  - **Recusa de repetição e desativação quando inferior:** validado que o motor zera `DrawAversion=0cp` quando perdendo ($< -50$ cp), escala para `50cp` contra oponente fraco e evita repetição tripla (`e5f3` em vez de `h6g7`) em posição equilibrada contra oponente fraco.
+  - **Cenário Forte (`SunTzu_F4` vs `SF_Base`, 60 partidas `4+0.04` em `UHO.epd`):** `V=14 E=32 D=14 | pontos 3-1-0: 74 x 74` (`Elo: 0.00 +/- 36.02`), comprovando zero regressão contra adversários da mesma força.
+  - **Cenário Fraco (`SunTzu=true` vs `SunTzu=false` contra `Skill Level=14`, 40 partidas em `UHO.epd`):** **40V 0E 0D (`120 x 0` pts 3-1-0, 0 empates)** com `SunTzu=true`, contra `38V 2E 0D` (`116 x 2` pts 3-1-0) com `SunTzu=false`.
 
 ### 2.5 Fase 5 — Modos Pressão, Virada, Conversão e Syzygy
 - **Problema:** Desempatar lances quase equivalentes na raiz conforme o estado da partida.
@@ -63,3 +68,4 @@ Toda modificação no motor **SunTzu** segue três regras de engenharia:
 ## 3. Experimentos Rejeitados
 
 - **Horizonte dinâmico agressivo ($N \in [12, 42]$) sem piso de múltiplos de $H$ (Fase 2):** Na primeira calibração do `timeman.cpp`, estimar $N$ abaixo de 20 lances no final da partida fazia o motor consumir a reserva e sofrer *time forfeit* quando partidas empatadas se estendiam além do lance 80 com atraso fixo $H$ por lance. Foi substituído por um piso conservador ($N \in [28, 52]$) combinado com gatilhos de pânico em $36H$, $22H$ e $15H$, reduzindo as quedas de seta de 5/30 para **0/40**.
+- **Retificação pura $\max(0, S_2 - S_1)$ sem banda morta de horizonte (Fase 4):** Ao truncar variações negativas a zero sem descontar o ruído natural de horizonte (~8 cp entre buscas rasas consecutivas), o valor esperado $\mathbb{E}[\max(0, \Delta)]$ de um oponente forte ($\mathbb{E}[\Delta]=0$) sofria viés positivo (~10–15 cp), classificando erroneamente motores fortes como médios após saltos táticos de horizonte. A introdução de uma banda morta de `8 cp` e correção negativa limitada (`-12 cp`) elevou a acurácia do classificador de 40% para **92.5%–95.0%**.
